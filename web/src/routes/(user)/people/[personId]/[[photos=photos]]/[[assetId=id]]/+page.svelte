@@ -398,9 +398,9 @@
     },
   }}
 >
-  {#key person.id}
+  {#key `${person.id}:${showFaceThumbnails}`}
     {#if showFaceThumbnails}
-      <div class="px-4 pt-16 sm:px-6">
+      <div class="immich-scrollbar h-full overflow-y-auto px-4 pt-16 pb-8 sm:px-6">
         {#if faceListLoading && faceList.length === 0}
           <div class="flex justify-center py-10"><LoadingSpinner /></div>
         {:else if faceList.length === 0}
