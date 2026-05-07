@@ -539,10 +539,40 @@ export class PersonService extends BaseService {
       return JobStatus.Skipped;
     }
 
-    type FaceRow = (typeof faces)[number];
+    type FaceRow = (typeof faces)[number] & {
+      _nx1: number;
+      _ny1: number;
+      _nx2: number;
+      _ny2: number;
+    };
+    // Normalise bboxes to [0,1] so faces stored in different coordinate spaces
+    // (e.g. ML at preview dimensions vs XMP-imported at original full-size) compare correctly.
+    const normalizedFaces: FaceRow[] = faces.map((f) => {
+      const [w, h] = [f.imageWidth || 0, f.imageHeight || 0];
+      return {
+        ...f,
+        _nx1: w > 0 ? f.boundingBoxX1 / w : 0,
+        _ny1: h > 0 ? f.boundingBoxY1 / h : 0,
+        _nx2: w > 0 ? f.boundingBoxX2 / w : 0,
+        _ny2: h > 0 ? f.boundingBoxY2 / h : 0,
+      };
+    });
+
+    const iouNormalized = (a: FaceRow, b: FaceRow): number => {
+      const x1 = Math.max(a._nx1, b._nx1);
+      const y1 = Math.max(a._ny1, b._ny1);
+      const x2 = Math.min(a._nx2, b._nx2);
+      const y2 = Math.min(a._ny2, b._ny2);
+      const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+      const areaA = Math.max(0, a._nx2 - a._nx1) * Math.max(0, a._ny2 - a._ny1);
+      const areaB = Math.max(0, b._nx2 - b._nx1) * Math.max(0, b._ny2 - b._ny1);
+      const union = areaA + areaB - intersection;
+      return union > 0 ? intersection / union : 0;
+    };
+
     const clusters: FaceRow[][] = [];
     const visited = new Set<string>();
-    for (const face of faces) {
+    for (const face of normalizedFaces) {
       if (visited.has(face.id)) {
         continue;
       }
@@ -551,17 +581,11 @@ export class PersonService extends BaseService {
       const queue: FaceRow[] = [face];
       while (queue.length > 0) {
         const head = queue.shift()!;
-        for (const other of faces) {
+        for (const other of normalizedFaces) {
           if (visited.has(other.id)) {
             continue;
           }
-          const overlap = this.iou(head, {
-            x1: other.boundingBoxX1,
-            y1: other.boundingBoxY1,
-            x2: other.boundingBoxX2,
-            y2: other.boundingBoxY2,
-          });
-          if (overlap >= iouThreshold) {
+          if (iouNormalized(head, other) >= iouThreshold) {
             visited.add(other.id);
             cluster.push(other);
             queue.push(other);

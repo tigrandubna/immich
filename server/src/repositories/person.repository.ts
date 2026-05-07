@@ -328,6 +328,8 @@ export class PersonRepository {
         'asset_face.boundingBoxY1',
         'asset_face.boundingBoxX2',
         'asset_face.boundingBoxY2',
+        'asset_face.imageWidth',
+        'asset_face.imageHeight',
         'asset.ownerId as ownerId',
         'asset.fileCreatedAt as fileCreatedAt',
         'person.name as personName',
