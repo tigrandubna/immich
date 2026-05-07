@@ -2,21 +2,47 @@
 
 Этот форк отличается от upstream `immich-app/immich` следующими доработками. Все они находятся в ветке [`feature/local-customizations`](../../tree/feature/local-customizations).
 
+## База данных и UI
+
 1. **Кириллическая база данных.** Кастомный образ Postgres ([`docker/Dockerfile.postgres-ru`](docker/Dockerfile.postgres-ru)) с локалью `ru_RU.UTF-8`. `initdb` инициализирует кластер с `--lc-collate=ru_RU.UTF-8 --lc-ctype=ru_RU.UTF-8`, поэтому `ORDER BY` по тексту автоматически использует русскую раскладку без правки запросов.
 
-2. **Чтение XMP из подпапки `.xmp/`.** Опционально (тумблер «Read XMP from .xmp/ subfolder» в Administration → System Settings → Metadata) Immich ищет XMP-файл не только рядом с фото, но и в подпапке `.xmp/`. Приоритет: `<dir>/<name>.<ext>.xmp` → `<dir>/<name>.xmp` → `<dir>/.xmp/<name>.<ext>.xmp` → `<dir>/.xmp/<name>.xmp`. Реализовано в [`server/src/services/metadata.service.ts`](server/src/services/metadata.service.ts).
+2. **Сортировка папок по русскому алфавиту, папки выше файлов.** В дереве папок `TreeNode.children` сортируется через `Intl.Collator('ru')`. Папки рендерятся выше галереи, ассеты внутри папки сортируются по имени (Russian-aware за счёт локали БД).
 
-3. **Запись распознанных лиц в XMP.** Опциональный тумблер «Write recognized faces to XMP» включает новый job `SidecarWriteFaces`. Триггерится после ML-распознавания, ручного переназначения лица и переименования персоны. Пишет MWG-Region теги через exiftool в существующий XMP по той же логике приоритета, что и при чтении; если sidecar отсутствует — создаёт `<dir>/.xmp/<name>.xmp`.
+## XMP-сайдкары
 
-4. **Секретная ссылка на персону.** Новый `SharedLinkType.Person` с миграцией, добавляющей `shared_link.personId`. В контекстном меню страницы персоны появилась команда «Создать ссылку для шаринга»: создаёт shareable URL вида `/share/<key>`, по которому видны все фотографии с этим человеком (включая будущие — резолв ассетов динамический). Отзыв через стандартную страницу управления Shared Links.
+3. **Чтение XMP из подпапки `.xmp/`.** Тумблер «Read XMP from .xmp/ subfolder» в Administration → System Settings → Metadata. Приоритет поиска: `<dir>/<name>.<ext>.xmp` → `<dir>/<name>.xmp` → `<dir>/.xmp/<name>.<ext>.xmp` → `<dir>/.xmp/<name>.xmp`.
 
-5. **Тумблер «миниатюры лиц» в просмотре персоны.** Кнопка в шапке страницы персоны переключает таймлайн на грид кропов лиц — удобно для быстрого поиска ошибочных распознаваний. Бэкенд: `GET /api/faces/:id/thumbnail` возвращает JPEG, обрезанный по bounding box (sharp, padding 1.4×); `GET /api/people/:id/faces` отдаёт список faceId+assetId.
+4. **Запись распознанных лиц в XMP.** Тумблер «Write recognized faces to XMP» включает job `SidecarWriteFaces`. Триггерится после ML-распознавания, ручного переназначения лица, переименования персоны и дедупликации. Пишет MWG-Region теги через exiftool в существующий XMP (та же логика приоритета, что при чтении); если sidecar отсутствует — создаёт `<dir>/.xmp/<name>.xmp`.
 
-6. **Сортировка папок по русскому алфавиту, папки выше файлов.** В дереве папок `TreeNode.children` сортируется через `Intl.Collator('ru')`. Папки и сейчас рендерятся выше галереи, ассеты внутри папки уже сортировались по имени (теперь Russian-aware за счёт локали БД).
+5. **Ручная перезапись XMP с лицами для всех фотографий.** Manual job `RewriteFaceSidecars` (Administration → Job Status → **+ Create job** → «Rewrite face XMP sidecars»). Стримит все ассеты, у которых есть хотя бы одно лицо с привязанным именем (`asset_face JOIN person WHERE name != ''`), и для каждого ставит `SidecarWriteFaces`. Полезно после массового переназначения или включения тумблера записи задним числом.
+
+## Лица и персоны
+
+6. **Грид «только лица» на странице персоны.** Кнопка-переключатель в шапке (`mdiFaceMan` ↔ `mdiImageMultiple`) переключает таймлайн на грид кропов лиц — удобно для быстрого поиска ошибочных распознаваний. Клик по миниатюре открывает соответствующий ассет.
+
+7. **Кэшируемые миниатюры лиц.** Колонка `asset_face.thumbnailPath` + новая очередь `QueueName.FaceThumbnail` с двумя джобами:
+   - `FaceGenerateThumbnail` — sharp-кроп `<dir>/.../face_<faceId>.jpeg` с padding 1.4×, путь сохраняется в БД.
+   - `FaceThumbnailQueueAll` — батч на все лица, опция «Missing» / «All» в Job Status.
+   - Авто-триггер после ML-детекта и XMP-импорта. Endpoint `GET /api/faces/:id/thumbnail` сначала отдаёт готовый файл через sendFile, иначе генерирует on-the-fly и кэширует. Эндпоинт `GET /api/people/:id/faces` отдаёт список `{faceId, assetId}` для построения сетки.
+
+8. **Дедупликация перекрывающихся лиц.** Очень часто одно и то же лицо попадает в БД дважды: один раз через ML, второй — через импорт XMP-региона. Их bbox практически совпадают, но хранятся в разных системах координат (preview vs original). Новый job `AssetFaceDedup` нормализует bbox в `[0,1]` через `imageWidth/imageHeight` каждого лица, кластеризует по IoU ≥ 0.7 и для каждого кластера применяет правила:
+   - все без имени → оставить первое, остальные удалить;
+   - одно с именем (или все с одним и тем же `personId`) → оставить именованное;
+   - конфликт имён → обнулить `personId` у оставшегося, удалить остальные, и через `searchRepository.searchFaces` с `hasPerson=true` подобрать ближайшего человека по embedding.
+   
+   Триггерится автоматически после ML-детекта и XMP-импорта; вручную — `Administration → Job Status → + Create job → «Deduplicate overlapping faces» / «Объединить дубликаты лиц»`. Если в результате что-то изменилось и включена запись XMP — следом ставится `SidecarWriteFaces`.
+
+9. **Настройки concurrency для новых очередей.** В `Administration → System Settings → Job Settings` появилось поле для `Face thumbnail` (по умолчанию 3). Дедупликация ходит через `BackgroundTask` queue.
+
+## Шеринг
+
+10. **Секретная ссылка на персону.** Новый `SharedLinkType.Person` + миграция, добавляющая `shared_link.personId`. В контекстном меню страницы персоны команда «Создать ссылку для шаринга»: генерирует URL `/share/<key>`, по которому без авторизации видны все фотографии с этим человеком (включая добавленные позже — резолв ассетов динамический по `asset_face.personId`).
+
+11. **Список шеринговых ссылок с именами.** На странице `/shared-links` для Person-ссылок отображается имя человека (DTO дополнен полем `personName`). Каждая карточка имеет стандартные кнопки **Edit / Copy / Delete** — Delete отзывает ссылку.
+
+## Запуск
 
 Внешние папки с фотографиями подключаются как bind-volumes сервиса `immich-server` в [`docker/docker-compose.dev.yml`](docker/docker-compose.dev.yml) — в файле уже есть закомментированный шаблон. Подробная инструкция по подключению папок и созданию External Library в UI: **[MOUNT_FOLDERS.md](MOUNT_FOLDERS.md)**.
-
-Запуск:
 
 ```bash
 docker compose -f ./docker/docker-compose.dev.yml up -d
