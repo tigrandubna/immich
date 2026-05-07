@@ -1,3 +1,30 @@
+# Изменения в этом форке
+
+Этот форк отличается от upstream `immich-app/immich` следующими доработками. Все они находятся в ветке [`feature/local-customizations`](../../tree/feature/local-customizations).
+
+1. **Кириллическая база данных.** Кастомный образ Postgres ([`docker/Dockerfile.postgres-ru`](docker/Dockerfile.postgres-ru)) с локалью `ru_RU.UTF-8`. `initdb` инициализирует кластер с `--lc-collate=ru_RU.UTF-8 --lc-ctype=ru_RU.UTF-8`, поэтому `ORDER BY` по тексту автоматически использует русскую раскладку без правки запросов.
+
+2. **Чтение XMP из подпапки `xmp/`.** Опционально (тумблер «Read XMP from xmp/ subfolder» в Administration → System Settings → Metadata) Immich ищет XMP-файл не только рядом с фото, но и в подпапке `xmp/`. Приоритет: `<dir>/<name>.<ext>.xmp` → `<dir>/<name>.xmp` → `<dir>/xmp/<name>.<ext>.xmp` → `<dir>/xmp/<name>.xmp`. Реализовано в [`server/src/services/metadata.service.ts`](server/src/services/metadata.service.ts).
+
+3. **Запись распознанных лиц в XMP.** Опциональный тумблер «Write recognized faces to XMP» включает новый job `SidecarWriteFaces`. Триггерится после ML-распознавания, ручного переназначения лица и переименования персоны. Пишет MWG-Region теги через exiftool в существующий XMP по той же логике приоритета, что и при чтении; если sidecar отсутствует — создаёт `<dir>/xmp/<name>.xmp`.
+
+4. **Секретная ссылка на персону.** Новый `SharedLinkType.Person` с миграцией, добавляющей `shared_link.personId`. В контекстном меню страницы персоны появилась команда «Создать ссылку для шаринга»: создаёт shareable URL вида `/share/<key>`, по которому видны все фотографии с этим человеком (включая будущие — резолв ассетов динамический). Отзыв через стандартную страницу управления Shared Links.
+
+5. **Тумблер «миниатюры лиц» в просмотре персоны.** Кнопка в шапке страницы персоны переключает таймлайн на грид кропов лиц — удобно для быстрого поиска ошибочных распознаваний. Бэкенд: `GET /api/faces/:id/thumbnail` возвращает JPEG, обрезанный по bounding box (sharp, padding 1.4×); `GET /api/people/:id/faces` отдаёт список faceId+assetId.
+
+6. **Сортировка папок по русскому алфавиту, папки выше файлов.** В дереве папок `TreeNode.children` сортируется через `Intl.Collator('ru')`. Папки и сейчас рендерятся выше галереи, ассеты внутри папки уже сортировались по имени (теперь Russian-aware за счёт локали БД).
+
+Папка `/Users/tigran/Desktop/PhotoBank` примонтирована в контейнер `immich_server` как `/external/PhotoBank` ([`docker/docker-compose.dev.yml`](docker/docker-compose.dev.yml)). Подробная инструкция по добавлению новых папок и подключению их через UI: **[MOUNT_FOLDERS.md](MOUNT_FOLDERS.md)**.
+
+Запуск:
+
+```bash
+docker compose -f ./docker/docker-compose.dev.yml up -d
+# UI: http://localhost:3000, API: http://localhost:2283
+```
+
+---
+
 <p align="center"> 
   <br/>
   <a href="https://opensource.org/license/agpl-v3"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg?color=3F51B5&style=for-the-badge&label=License&logoColor=000000&labelColor=ececec" alt="License: AGPLv3"></a>
