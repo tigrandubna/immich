@@ -1228,6 +1228,7 @@ export type QueuesResponseLegacyDto = {
     duplicateDetection: QueueResponseLegacyDto;
     editor: QueueResponseLegacyDto;
     faceDetection: QueueResponseLegacyDto;
+    faceThumbnail: QueueResponseLegacyDto;
     facialRecognition: QueueResponseLegacyDto;
     library: QueueResponseLegacyDto;
     metadataExtraction: QueueResponseLegacyDto;
@@ -2379,6 +2380,7 @@ export type SystemConfigJobDto = {
     backgroundTask: JobSettingsDto;
     editor: JobSettingsDto;
     faceDetection: JobSettingsDto;
+    faceThumbnail: JobSettingsDto;
     library: JobSettingsDto;
     metadataExtraction: JobSettingsDto;
     migration: JobSettingsDto;
@@ -7009,6 +7011,7 @@ export enum QueueName {
     VideoConversion = "videoConversion",
     FaceDetection = "faceDetection",
     FacialRecognition = "facialRecognition",
+    FaceThumbnail = "faceThumbnail",
     SmartSearch = "smartSearch",
     DuplicateDetection = "duplicateDetection",
     BackgroundTask = "backgroundTask",
