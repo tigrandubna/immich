@@ -1,6 +1,6 @@
-import { Body, Controller, Delete, Get, Header, HttpCode, HttpStatus, Param, Post, Put, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Next, Param, Post, Put, Query, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import type { Response } from 'express';
+import type { NextFunction, Response } from 'express';
 import { Endpoint, HistoryBuilder } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
@@ -11,14 +11,19 @@ import {
   PersonResponseDto,
 } from 'src/dtos/person.dto';
 import { ApiTag, Permission } from 'src/enum';
-import { Auth, Authenticated } from 'src/middleware/auth.guard';
+import { Auth, Authenticated, FileResponse } from 'src/middleware/auth.guard';
+import { LoggingRepository } from 'src/repositories/logging.repository';
 import { PersonService } from 'src/services/person.service';
+import { sendFile } from 'src/utils/file';
 import { UUIDParamDto } from 'src/validation';
 
 @ApiTags(ApiTag.Faces)
 @Controller('faces')
 export class FaceController {
-  constructor(private service: PersonService) {}
+  constructor(
+    private service: PersonService,
+    private logger: LoggingRepository,
+  ) {}
 
   @Post()
   @Authenticated({ permission: Permission.FaceCreate })
@@ -71,9 +76,8 @@ export class FaceController {
   }
 
   @Get(':id/thumbnail')
+  @FileResponse()
   @Authenticated({ permission: Permission.FaceRead })
-  @Header('Content-Type', 'image/jpeg')
-  @Header('Cache-Control', 'private, max-age=86400')
   @Endpoint({
     summary: 'Get a face thumbnail',
     description: 'Return a cropped JPEG centered on the face bounding box of the given face.',
@@ -81,10 +85,10 @@ export class FaceController {
   })
   async getFaceThumbnail(
     @Res() res: Response,
+    @Next() next: NextFunction,
     @Auth() auth: AuthDto,
     @Param() { id }: UUIDParamDto,
   ): Promise<void> {
-    const buffer = await this.service.getFaceThumbnailBuffer(auth, id);
-    res.send(buffer);
+    await sendFile(res, next, () => this.service.getFaceThumbnailFile(auth, id), this.logger);
   }
 }

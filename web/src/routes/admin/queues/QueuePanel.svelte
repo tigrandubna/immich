@@ -70,6 +70,11 @@
       missingText: $t('missing'),
       disabled: !featureFlags.facialRecognition,
     },
+    [QueueName.FaceThumbnail]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+      disabled: !featureFlags.facialRecognition,
+    },
     [QueueName.Ocr]: {
       allText: $t('all'),
       missingText: $t('missing'),

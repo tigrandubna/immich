@@ -5491,6 +5491,14 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -17999,6 +18007,8 @@
           "PersonCleanup",
           "PersonFileMigration",
           "PersonGenerateThumbnail",
+          "FaceThumbnailQueueAll",
+          "FaceGenerateThumbnail",
           "SessionCleanup",
           "SendMail",
           "SidecarQueueAll",
@@ -20419,6 +20429,7 @@
           "videoConversion",
           "faceDetection",
           "facialRecognition",
+          "faceThumbnail",
           "smartSearch",
           "duplicateDetection",
           "backgroundTask",
@@ -20562,6 +20573,9 @@
           "faceDetection": {
             "$ref": "#/components/schemas/QueueResponseLegacyDto"
           },
+          "faceThumbnail": {
+            "$ref": "#/components/schemas/QueueResponseLegacyDto"
+          },
           "facialRecognition": {
             "$ref": "#/components/schemas/QueueResponseLegacyDto"
           },
@@ -20608,6 +20622,7 @@
           "duplicateDetection",
           "editor",
           "faceDetection",
+          "faceThumbnail",
           "facialRecognition",
           "library",
           "metadataExtraction",
@@ -24378,6 +24393,9 @@
           "faceDetection": {
             "$ref": "#/components/schemas/JobSettingsDto"
           },
+          "faceThumbnail": {
+            "$ref": "#/components/schemas/JobSettingsDto"
+          },
           "library": {
             "$ref": "#/components/schemas/JobSettingsDto"
           },
@@ -24416,6 +24434,7 @@
           "backgroundTask",
           "editor",
           "faceDetection",
+          "faceThumbnail",
           "library",
           "metadataExtraction",
           "migration",

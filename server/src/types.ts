@@ -362,6 +362,8 @@ export type JobItem =
   | { name: JobName.FacialRecognitionQueueAll; data: INightlyJob }
   | { name: JobName.FacialRecognition; data: IDeferrableJob }
   | { name: JobName.PersonGenerateThumbnail; data: IEntityJob }
+  | { name: JobName.FaceThumbnailQueueAll; data: IBaseJob }
+  | { name: JobName.FaceGenerateThumbnail; data: IEntityJob }
 
   // Smart Search
   | { name: JobName.SmartSearchQueueAll; data: IBaseJob }

@@ -1,6 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Insertable, Updateable } from 'kysely';
+import { constants as fsConstants } from 'node:fs';
+import { dirname } from 'node:path';
 import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
+import { StorageCore } from 'src/cores/storage.core';
 import { Person } from 'src/database';
 import { Chunked, OnJob } from 'src/decorators';
 import { BulkIdErrorReason, BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto';
@@ -189,26 +192,97 @@ export class PersonService extends BaseService {
     });
   }
 
-  async getFaceThumbnailBuffer(auth: AuthDto, faceId: string): Promise<Buffer> {
+  async getFaceThumbnailFile(auth: AuthDto, faceId: string): Promise<ImmichFileResponse> {
     await this.requireAccess({ auth, permission: Permission.AssetRead, ids: [faceId] });
-    const face = await this.personRepository.getFaceById(faceId);
-    if (!face?.assetId) {
+
+    const path = await this.ensureFaceThumbnail(faceId);
+    return new ImmichFileResponse({
+      path,
+      contentType: 'image/jpeg',
+      cacheControl: CacheControl.PrivateWithCache,
+    });
+  }
+
+  private async ensureFaceThumbnail(faceId: string): Promise<string> {
+    const face = await this.personRepository.getFaceForThumbnailJob(faceId);
+    if (!face?.assetId || !face.asset?.ownerId) {
       throw new NotFoundException();
     }
 
+    if (face.thumbnailPath && (await this.storageRepository.checkFileExists(face.thumbnailPath, fsConstants.R_OK))) {
+      return face.thumbnailPath;
+    }
+
+    return this.generateFaceThumbnail({
+      id: face.id,
+      assetId: face.assetId,
+      ownerId: face.asset.ownerId,
+      boundingBoxX1: face.boundingBoxX1,
+      boundingBoxY1: face.boundingBoxY1,
+      boundingBoxX2: face.boundingBoxX2,
+      boundingBoxY2: face.boundingBoxY2,
+      imageWidth: face.imageWidth || 0,
+      imageHeight: face.imageHeight || 0,
+    });
+  }
+
+  private async generateFaceThumbnail(face: {
+    id: string;
+    assetId: string;
+    ownerId: string;
+    boundingBoxX1: number;
+    boundingBoxY1: number;
+    boundingBoxX2: number;
+    boundingBoxY2: number;
+    imageWidth: number;
+    imageHeight: number;
+  }): Promise<string> {
     const asset = await this.assetRepository.getForThumbnail(face.assetId, AssetFileType.Preview, false);
     if (!asset?.path) {
       throw new NotFoundException('Asset preview not available');
     }
 
-    return this.mediaRepository.cropFace(asset.path, {
+    const targetPath = StorageCore.getFaceThumbnailPath({ id: face.id, ownerId: face.ownerId });
+    this.storageRepository.mkdirSync(dirname(targetPath));
+
+    const buffer = await this.mediaRepository.cropFace(asset.path, {
       x1: face.boundingBoxX1,
       y1: face.boundingBoxY1,
       x2: face.boundingBoxX2,
       y2: face.boundingBoxY2,
-      sourceWidth: face.imageWidth || 0,
-      sourceHeight: face.imageHeight || 0,
+      sourceWidth: face.imageWidth,
+      sourceHeight: face.imageHeight,
     });
+
+    await this.storageRepository.createOrOverwriteFile(targetPath, buffer);
+    await this.personRepository.updateThumbnailPath(face.id, targetPath);
+    return targetPath;
+  }
+
+  @OnJob({ name: JobName.FaceThumbnailQueueAll, queue: QueueName.FaceThumbnail })
+  async handleQueueFaceThumbnails({ force }: JobOf<JobName.FaceThumbnailQueueAll>): Promise<JobStatus> {
+    let jobs: JobItem[] = [];
+    const stream = this.personRepository.streamFacesNeedingThumbnail(force);
+    for await (const row of stream) {
+      jobs.push({ name: JobName.FaceGenerateThumbnail, data: { id: row.id } });
+      if (jobs.length >= JOBS_ASSET_PAGINATION_SIZE) {
+        await this.jobRepository.queueAll(jobs);
+        jobs = [];
+      }
+    }
+    await this.jobRepository.queueAll(jobs);
+    return JobStatus.Success;
+  }
+
+  @OnJob({ name: JobName.FaceGenerateThumbnail, queue: QueueName.FaceThumbnail })
+  async handleGenerateFaceThumbnail({ id }: JobOf<JobName.FaceGenerateThumbnail>): Promise<JobStatus> {
+    try {
+      await this.ensureFaceThumbnail(id);
+      return JobStatus.Success;
+    } catch (error) {
+      this.logger.warn(`Failed to generate face thumbnail for ${id}: ${error}`);
+      return JobStatus.Failed;
+    }
   }
 
   async create(auth: AuthDto, dto: PersonCreateDto): Promise<PersonResponseDto> {
@@ -413,7 +487,14 @@ export class PersonService extends BaseService {
     if (facesToAdd.length > 0) {
       this.logger.log(`Detected ${facesToAdd.length} new faces in asset ${id}`);
       const jobs = facesToAdd.map((face) => ({ name: JobName.FacialRecognition, data: { id: face.id } }) as const);
-      await this.jobRepository.queueAll([{ name: JobName.FacialRecognitionQueueAll, data: { force: false } }, ...jobs]);
+      const thumbJobs = facesToAdd.map(
+        (face) => ({ name: JobName.FaceGenerateThumbnail, data: { id: face.id } }) as const,
+      );
+      await this.jobRepository.queueAll([
+        { name: JobName.FacialRecognitionQueueAll, data: { force: false } },
+        ...jobs,
+        ...thumbJobs,
+      ]);
     } else if (embeddings.length > 0) {
       this.logger.log(`Added ${embeddings.length} face embeddings for asset ${id}`);
     }

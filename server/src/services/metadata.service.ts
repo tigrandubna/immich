@@ -1032,6 +1032,13 @@ export class MetadataService extends BaseService {
       await this.personRepository.refreshFaces(facesToAdd, facesToRemove);
     }
 
+    if (facesToAdd.length > 0) {
+      const thumbnailJobs: JobItem[] = facesToAdd
+        .filter((f): f is typeof f & { id: string } => typeof f.id === 'string')
+        .map((f) => ({ name: JobName.FaceGenerateThumbnail, data: { id: f.id } }));
+      await this.jobRepository.queueAll(thumbnailJobs);
+    }
+
     if (missingWithFaceAsset.length > 0) {
       await this.personRepository.updateAll(missingWithFaceAsset);
     }

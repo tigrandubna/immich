@@ -231,6 +231,10 @@ export class QueueService extends BaseService {
         return this.jobRepository.queue({ name: JobName.FacialRecognitionQueueAll, data: { force } });
       }
 
+      case QueueName.FaceThumbnail: {
+        return this.jobRepository.queue({ name: JobName.FaceThumbnailQueueAll, data: { force } });
+      }
+
       case QueueName.Library: {
         return this.jobRepository.queue({ name: JobName.LibraryScanQueueAll, data: { force } });
       }

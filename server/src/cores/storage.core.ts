@@ -113,6 +113,10 @@ export class StorageCore {
     return StorageCore.getNestedPath(StorageFolder.Thumbnails, person.ownerId, `${person.id}.jpeg`);
   }
 
+  static getFaceThumbnailPath(face: { id: string; ownerId: string }) {
+    return StorageCore.getNestedPath(StorageFolder.Thumbnails, face.ownerId, `face_${face.id}.jpeg`);
+  }
+
   static getImagePath(asset: ThumbnailPathEntity, { fileType, format, isEdited }: ImagePathOptions) {
     return StorageCore.getNestedPath(
       StorageFolder.Thumbnails,

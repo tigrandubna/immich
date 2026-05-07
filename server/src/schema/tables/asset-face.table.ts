@@ -86,4 +86,7 @@ export class AssetFaceTable {
 
   @Column({ type: 'boolean', default: true })
   isVisible!: Generated<boolean>;
+
+  @Column({ type: 'character varying', nullable: true })
+  thumbnailPath!: string | null;
 }

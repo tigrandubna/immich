@@ -245,6 +245,52 @@ export class PersonRepository {
   }
 
   @GenerateSql({ params: [DummyValue.UUID] })
+  getFaceForThumbnailJob(id: string) {
+    return this.db
+      .selectFrom('asset_face')
+      .select([
+        'asset_face.id',
+        'asset_face.assetId',
+        'asset_face.boundingBoxX1',
+        'asset_face.boundingBoxY1',
+        'asset_face.boundingBoxX2',
+        'asset_face.boundingBoxY2',
+        'asset_face.imageWidth',
+        'asset_face.imageHeight',
+        'asset_face.thumbnailPath',
+      ])
+      .select((eb) =>
+        jsonObjectFrom(
+          eb
+            .selectFrom('asset')
+            .select(['asset.ownerId'])
+            .whereRef('asset.id', '=', 'asset_face.assetId'),
+        ).as('asset'),
+      )
+      .where('asset_face.id', '=', id)
+      .where('asset_face.deletedAt', 'is', null)
+      .executeTakeFirst();
+  }
+
+  async updateThumbnailPath(faceId: string, thumbnailPath: string | null) {
+    await this.db
+      .updateTable('asset_face')
+      .set({ thumbnailPath })
+      .where('id', '=', faceId)
+      .execute();
+  }
+
+  streamFacesNeedingThumbnail(force?: boolean) {
+    return this.db
+      .selectFrom('asset_face')
+      .select(['asset_face.id'])
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', 'is', true)
+      .$if(!force, (qb) => qb.where('asset_face.thumbnailPath', 'is', null))
+      .stream();
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID] })
   getFaceForFacialRecognitionJob(id: string) {
     return this.db
       .selectFrom('asset_face')

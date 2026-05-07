@@ -275,6 +275,7 @@ export type AssetFace = {
   updatedAt: Date;
   updateId: string;
   isVisible: boolean;
+  thumbnailPath: string | null;
 };
 
 export type PluginFilter = Selectable<PluginFilterTable> & {

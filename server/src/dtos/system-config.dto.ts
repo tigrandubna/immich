@@ -92,6 +92,7 @@ const SystemConfigJobSchema = z
     metadataExtraction: JobSettingsSchema,
     videoConversion: JobSettingsSchema,
     faceDetection: JobSettingsSchema,
+    faceThumbnail: JobSettingsSchema,
     smartSearch: JobSettingsSchema,
     backgroundTask: JobSettingsSchema,
     migration: JobSettingsSchema,

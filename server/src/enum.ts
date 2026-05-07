@@ -759,6 +759,7 @@ export enum QueueName {
   VideoConversion = 'videoConversion',
   FaceDetection = 'faceDetection',
   FacialRecognition = 'facialRecognition',
+  FaceThumbnail = 'faceThumbnail',
   SmartSearch = 'smartSearch',
   DuplicateDetection = 'duplicateDetection',
   BackgroundTask = 'backgroundTask',
@@ -839,6 +840,8 @@ export enum JobName {
   PersonCleanup = 'PersonCleanup',
   PersonFileMigration = 'PersonFileMigration',
   PersonGenerateThumbnail = 'PersonGenerateThumbnail',
+  FaceThumbnailQueueAll = 'FaceThumbnailQueueAll',
+  FaceGenerateThumbnail = 'FaceGenerateThumbnail',
 
   SessionCleanup = 'SessionCleanup',
 
