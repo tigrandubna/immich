@@ -416,10 +416,17 @@
               title={person.name}
             >
               <img
-                src={`/api/faces/${face.id}/thumbnail`}
+                src={`/api/faces/${face.id}/thumbnail?v=2`}
                 alt={person.name || ''}
                 loading="lazy"
                 class="h-full w-full object-cover"
+                onerror={(e) => {
+                  const img = e.currentTarget as HTMLImageElement;
+                  if (!img.dataset.retried) {
+                    img.dataset.retried = '1';
+                    img.src = `/api/faces/${face.id}/thumbnail?v=2&r=${Date.now()}`;
+                  }
+                }}
               />
             </a>
           {/each}
