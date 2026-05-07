@@ -75,7 +75,11 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - pnpm_store_server:/buildcache/pnpm-store
       - ../plugins:/build/corePlugin
-      - /Users/tigran/Desktop/PhotoBank:/external/PhotoBank
+      # External photo libraries — uncomment and adjust paths to mount your own folders.
+      # Mount as read-write so the server can write face regions to XMP sidecars.
+      # See MOUNT_FOLDERS.md for details.
+      # - /absolute/path/to/your/photos:/external/MyPhotos
+      # - /another/absolute/path:/external/AnotherLibrary
     env_file:
       - .env
     environment:

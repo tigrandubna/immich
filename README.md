@@ -14,7 +14,7 @@
 
 6. **Сортировка папок по русскому алфавиту, папки выше файлов.** В дереве папок `TreeNode.children` сортируется через `Intl.Collator('ru')`. Папки и сейчас рендерятся выше галереи, ассеты внутри папки уже сортировались по имени (теперь Russian-aware за счёт локали БД).
 
-Папка `/Users/tigran/Desktop/PhotoBank` примонтирована в контейнер `immich_server` как `/external/PhotoBank` ([`docker/docker-compose.dev.yml`](docker/docker-compose.dev.yml)). Подробная инструкция по добавлению новых папок и подключению их через UI: **[MOUNT_FOLDERS.md](MOUNT_FOLDERS.md)**.
+Внешние папки с фотографиями подключаются как bind-volumes сервиса `immich-server` в [`docker/docker-compose.dev.yml`](docker/docker-compose.dev.yml) — в файле уже есть закомментированный шаблон. Подробная инструкция по подключению папок и созданию External Library в UI: **[MOUNT_FOLDERS.md](MOUNT_FOLDERS.md)**.
 
 Запуск:
 
