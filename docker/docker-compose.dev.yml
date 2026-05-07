@@ -75,6 +75,7 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - pnpm_store_server:/buildcache/pnpm-store
       - ../plugins:/build/corePlugin
+      - /Users/tigran/Desktop/PhotoBank:/external/PhotoBank
     env_file:
       - .env
     environment:
@@ -163,14 +164,19 @@ services:
 
   database:
     container_name: immich_postgres
-    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    image: immich-postgres-ru:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres-ru
     env_file:
       - .env
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_USER: ${DB_USERNAME}
       POSTGRES_DB: ${DB_DATABASE_NAME}
-      POSTGRES_INITDB_ARGS: '--data-checksums'
+      POSTGRES_INITDB_ARGS: '--data-checksums --locale=ru_RU.UTF-8 --lc-collate=ru_RU.UTF-8 --lc-ctype=ru_RU.UTF-8 --encoding=UTF8'
+      LANG: ru_RU.UTF-8
+      LC_ALL: ru_RU.UTF-8
     volumes:
       - ${UPLOAD_LOCATION}/postgres:/var/lib/postgresql/data
     ports:

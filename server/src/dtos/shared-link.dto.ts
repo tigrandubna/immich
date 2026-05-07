@@ -23,6 +23,7 @@ const SharedLinkCreateSchema = z
     type: SharedLinkTypeSchema,
     assetIds: z.array(z.uuidv4()).optional().describe('Asset IDs (for individual assets)'),
     albumId: z.uuidv4().optional().describe('Album ID (for album sharing)'),
+    personId: z.uuidv4().optional().describe('Person ID (for person sharing)'),
     description: emptyStringToNull(z.string().nullable()).optional().describe('Link description'),
     password: emptyStringToNull(z.string().nullable()).optional().describe('Link password'),
     slug: emptyStringToNull(z.string().nullable()).optional().describe('Custom URL slug'),
@@ -73,6 +74,7 @@ const SharedLinkResponseSchema = z
     allowDownload: z.boolean().describe('Allow downloads'),
     showMetadata: z.boolean().describe('Show metadata'),
     slug: z.string().nullable().describe('Custom URL slug'),
+    personId: z.string().nullable().describe('Person ID (for person-shared links)'),
   })
   .describe('Shared link response')
   .meta({ id: 'SharedLinkResponseDto' });
@@ -101,6 +103,7 @@ export function mapSharedLink(sharedLink: SharedLink, options: { stripAssetMetad
     allowDownload: sharedLink.allowDownload,
     showMetadata: sharedLink.showExif,
     slug: sharedLink.slug,
+    personId: sharedLink.personId ?? null,
   };
 
   // unless we select sharedLink.album.sharedLinks this will be wrong

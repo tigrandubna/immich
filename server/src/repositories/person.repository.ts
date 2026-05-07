@@ -248,7 +248,7 @@ export class PersonRepository {
   getFaceForFacialRecognitionJob(id: string) {
     return this.db
       .selectFrom('asset_face')
-      .select(['asset_face.id', 'asset_face.personId', 'asset_face.sourceType'])
+      .select(['asset_face.id', 'asset_face.personId', 'asset_face.sourceType', 'asset_face.assetId'])
       .select((eb) =>
         jsonObjectFrom(
           eb
@@ -490,6 +490,24 @@ export class PersonRepository {
       .where('asset_face.deletedAt', 'is', null)
       .where('asset_face.isVisible', 'is', true)
       .executeTakeFirst();
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getFacesByPersonId(personId: string) {
+    return this.db
+      .selectFrom('asset_face')
+      .innerJoin('asset', (join) =>
+        join
+          .onRef('asset.id', '=', 'asset_face.assetId')
+          .on('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+          .on('asset.deletedAt', 'is', null),
+      )
+      .select(['asset_face.id', 'asset_face.assetId', 'asset.fileCreatedAt'])
+      .where('asset_face.personId', '=', personId)
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', 'is', true)
+      .orderBy('asset.fileCreatedAt', 'desc')
+      .execute();
   }
 
   @GenerateSql()

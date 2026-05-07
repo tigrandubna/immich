@@ -106,7 +106,13 @@ export class TreeNode extends Map<string, TreeNode> {
   }
 
   get children(): TreeNode[] {
-    return (this._children ??= Array.from(this.values()));
+    if (this._children) {
+      return this._children;
+    }
+    const items = Array.from(this.values());
+    const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' });
+    items.sort((a, b) => collator.compare(a.value, b.value));
+    return (this._children = items);
   }
 }
 

@@ -152,6 +152,41 @@ export class MediaRepository {
     return this.getImageDecodingPipeline(input, options).raw().toBuffer({ resolveWithObject: true });
   }
 
+  async cropFace(
+    input: string,
+    bbox: { x1: number; y1: number; x2: number; y2: number; sourceWidth: number; sourceHeight: number },
+    outputSize = 256,
+  ): Promise<Buffer> {
+    const image = sharp(input, { failOn: 'none' });
+    const metadata = await image.metadata();
+    const previewW = metadata.width ?? bbox.sourceWidth;
+    const previewH = metadata.height ?? bbox.sourceHeight;
+    const scaleX = previewW / Math.max(bbox.sourceWidth, 1);
+    const scaleY = previewH / Math.max(bbox.sourceHeight, 1);
+
+    const x1 = bbox.x1 * scaleX;
+    const y1 = bbox.y1 * scaleY;
+    const x2 = bbox.x2 * scaleX;
+    const y2 = bbox.y2 * scaleY;
+    const cx = (x1 + x2) / 2;
+    const cy = (y1 + y2) / 2;
+    const size = Math.max(x2 - x1, y2 - y1) * 1.4;
+    const half = size / 2;
+
+    const left = Math.max(0, Math.round(cx - half));
+    const top = Math.max(0, Math.round(cy - half));
+    const right = Math.min(previewW, Math.round(cx + half));
+    const bottom = Math.min(previewH, Math.round(cy + half));
+    const width = Math.max(1, right - left);
+    const height = Math.max(1, bottom - top);
+
+    return image
+      .extract({ left, top, width, height })
+      .resize(outputSize, outputSize, { fit: 'cover' })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+  }
+
   private applyEdits(pipeline: sharp.Sharp, edits: AssetEditActionItem[]): sharp.Sharp {
     const crop = edits.find((edit) => edit.action === 'crop');
     if (crop) {

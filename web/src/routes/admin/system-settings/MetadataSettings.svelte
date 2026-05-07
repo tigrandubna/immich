@@ -20,6 +20,18 @@
           bind:checked={configToEdit.metadata.faces.import}
           {disabled}
         />
+        <SettingSwitch
+          title={$t('admin.metadata_faces_read_subfolder_setting')}
+          subtitle={$t('admin.metadata_faces_read_subfolder_setting_description')}
+          bind:checked={configToEdit.metadata.faces.readFromSubfolder}
+          {disabled}
+        />
+        <SettingSwitch
+          title={$t('admin.metadata_faces_write_setting')}
+          subtitle={$t('admin.metadata_faces_write_setting_description')}
+          bind:checked={configToEdit.metadata.faces.writeFaces}
+          {disabled}
+        />
       </div>
 
       <SettingButtonsRow bind:configToEdit keys={['metadata']} {disabled} />

@@ -139,6 +139,20 @@ export class PersonController {
     return this.service.getStatistics(auth, id);
   }
 
+  @Get(':id/faces')
+  @Authenticated({ permission: Permission.PersonRead })
+  @Endpoint({
+    summary: 'List faces of a person',
+    description: 'Return faces belonging to the given person, with their asset IDs, ordered by capture date desc.',
+    history: new HistoryBuilder().added('v1'),
+  })
+  getPersonFacesList(
+    @Auth() auth: AuthDto,
+    @Param() { id }: UUIDParamDto,
+  ): Promise<Array<{ id: string; assetId: string }>> {
+    return this.service.getFacesForPerson(auth, id);
+  }
+
   @Get(':id/thumbnail')
   @FileResponse()
   @Authenticated({ permission: Permission.PersonRead })

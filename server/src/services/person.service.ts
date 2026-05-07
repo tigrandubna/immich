@@ -23,6 +23,7 @@ import {
   PersonUpdateDto,
 } from 'src/dtos/person.dto';
 import {
+  AssetFileType,
   AssetVisibility,
   CacheControl,
   JobName,
@@ -84,6 +85,7 @@ export class PersonService extends BaseService {
     const person = await this.findOrFail(personId);
     const result: PersonResponseDto[] = [];
     const changeFeaturePhoto: string[] = [];
+    const affectedAssetIds: string[] = [];
     for (const data of dto.data) {
       const faces = await this.personRepository.getFacesByIds([{ personId: data.personId, assetId: data.assetId }]);
 
@@ -97,6 +99,7 @@ export class PersonService extends BaseService {
         }
 
         await this.personRepository.reassignFace(face.id, personId);
+        affectedAssetIds.push(data.assetId);
       }
 
       result.push(mapPerson(person));
@@ -105,6 +108,7 @@ export class PersonService extends BaseService {
       // Remove duplicates
       await this.createNewFeaturePhoto([...new Set(changeFeaturePhoto)]);
     }
+    await this.queueFaceSidecarWriteIfEnabled(affectedAssetIds);
     return result;
   }
 
@@ -120,6 +124,9 @@ export class PersonService extends BaseService {
     }
     if (face.person && face.person.faceAssetId === face.id) {
       await this.createNewFeaturePhoto([face.person.id]);
+    }
+    if (face.assetId) {
+      await this.queueFaceSidecarWriteIfEnabled([face.assetId]);
     }
 
     return await this.findOrFail(personId).then(mapPerson);
@@ -162,6 +169,12 @@ export class PersonService extends BaseService {
     return this.personRepository.getStatistics(id);
   }
 
+  async getFacesForPerson(auth: AuthDto, personId: string): Promise<Array<{ id: string; assetId: string }>> {
+    await this.requireAccess({ auth, permission: Permission.PersonRead, ids: [personId] });
+    const rows = await this.personRepository.getFacesByPersonId(personId);
+    return rows.map((row) => ({ id: row.id, assetId: row.assetId }));
+  }
+
   async getThumbnail(auth: AuthDto, id: string): Promise<ImmichFileResponse> {
     await this.requireAccess({ auth, permission: Permission.PersonRead, ids: [id] });
     const person = await this.personRepository.getById(id);
@@ -173,6 +186,28 @@ export class PersonService extends BaseService {
       path: person.thumbnailPath,
       contentType: mimeTypes.lookup(person.thumbnailPath),
       cacheControl: CacheControl.PrivateWithoutCache,
+    });
+  }
+
+  async getFaceThumbnailBuffer(auth: AuthDto, faceId: string): Promise<Buffer> {
+    await this.requireAccess({ auth, permission: Permission.AssetRead, ids: [faceId] });
+    const face = await this.personRepository.getFaceById(faceId);
+    if (!face?.assetId) {
+      throw new NotFoundException();
+    }
+
+    const asset = await this.assetRepository.getForThumbnail(face.assetId, AssetFileType.Preview, false);
+    if (!asset?.path) {
+      throw new NotFoundException('Asset preview not available');
+    }
+
+    return this.mediaRepository.cropFace(asset.path, {
+      x1: face.boundingBoxX1,
+      y1: face.boundingBoxY1,
+      x2: face.boundingBoxX2,
+      y2: face.boundingBoxY2,
+      sourceWidth: face.imageWidth || 0,
+      sourceHeight: face.imageHeight || 0,
     });
   }
 
@@ -217,6 +252,11 @@ export class PersonService extends BaseService {
 
     if (assetId) {
       await this.jobRepository.queue({ name: JobName.PersonGenerateThumbnail, data: { id } });
+    }
+
+    if (name !== undefined && person.name !== undefined) {
+      const faces = await this.personRepository.getFacesByPersonId(id);
+      await this.queueFaceSidecarWriteIfEnabled(faces.map((f) => f.assetId));
     }
 
     return mapPerson(person);
@@ -537,9 +577,26 @@ export class PersonService extends BaseService {
     if (personId) {
       this.logger.debug(`Assigning face ${id} to person ${personId}`);
       await this.personRepository.reassignFaces({ faceIds: [id], newPersonId: personId });
+      if (face.assetId) {
+        await this.queueFaceSidecarWriteIfEnabled([face.assetId]);
+      }
     }
 
     return JobStatus.Success;
+  }
+
+  private async queueFaceSidecarWriteIfEnabled(assetIds: string[]) {
+    if (assetIds.length === 0) {
+      return;
+    }
+    const { metadata } = await this.getConfig({ withCache: true });
+    if (!metadata.faces.writeFaces) {
+      return;
+    }
+    const unique = [...new Set(assetIds)];
+    await this.jobRepository.queueAll(
+      unique.map((id) => ({ name: JobName.SidecarWriteFaces, data: { id } }) as const),
+    );
   }
 
   @OnJob({ name: JobName.PersonFileMigration, queue: QueueName.Migration })

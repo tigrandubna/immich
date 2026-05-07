@@ -44,12 +44,21 @@
     ActionButton,
     CommandPaletteDefaultProvider,
     ContextMenuButton,
+    IconButton,
     LoadingSpinner,
     modalManager,
     toastManager,
     type ActionItem,
   } from '@immich/ui';
-  import { mdiAccountBoxOutline, mdiAccountMultipleCheckOutline, mdiArrowLeft, mdiDotsVertical } from '@mdi/js';
+  import {
+    mdiAccountBoxOutline,
+    mdiAccountMultipleCheckOutline,
+    mdiArrowLeft,
+    mdiDotsVertical,
+    mdiFaceMan,
+    mdiImageMultiple,
+    mdiShareVariantOutline,
+  } from '@mdi/js';
   import { DateTime } from 'luxon';
   import { onMount } from 'svelte';
   import { t } from 'svelte-i18n';
@@ -70,6 +79,29 @@
 
   let viewMode: PersonPageViewMode = $state(PersonPageViewMode.VIEW_ASSETS);
   let isEditingName = $state(false);
+  let showFaceThumbnails = $state(false);
+  let faceList = $state<Array<{ id: string; assetId: string }>>([]);
+  let faceListLoading = $state(false);
+
+  const loadFaceList = async () => {
+    faceListLoading = true;
+    try {
+      const response = await fetch(`/api/people/${person.id}/faces`);
+      if (response.ok) {
+        faceList = await response.json();
+      }
+    } catch (error) {
+      handleError(error, 'Failed to load faces');
+    } finally {
+      faceListLoading = false;
+    }
+  };
+
+  $effect(() => {
+    if (showFaceThumbnails && faceList.length === 0 && !faceListLoading) {
+      void loadFaceList();
+    }
+  });
   let previousRoute = $state<string>(Route.explore());
   let personMerge1: PersonResponseDto | undefined = $state();
   let personMerge2: PersonResponseDto | undefined = $state();
@@ -319,6 +351,35 @@
       viewMode = PersonPageViewMode.MERGE_PEOPLE;
     },
   };
+
+  const handleCreatePersonShareLink = async () => {
+    try {
+      const response = await fetch('/api/shared-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'PERSON', personId: person.id, allowDownload: true, showMetadata: true }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed: ${response.status}`);
+      }
+      const link = await response.json();
+      const url = `${window.location.origin}/share/${link.key}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        toastManager.primary($t('shared_link_copied'));
+      } catch {
+        toastManager.primary(url);
+      }
+    } catch (error) {
+      handleError(error, $t('errors.unable_to_create_shared_link'));
+    }
+  };
+
+  const CreatePersonShareLink: ActionItem = {
+    title: $t('create_person_share_link'),
+    icon: mdiShareVariantOutline,
+    onAction: handleCreatePersonShareLink,
+  };
 </script>
 
 <OnEvents
@@ -338,6 +399,32 @@
   }}
 >
   {#key person.id}
+    {#if showFaceThumbnails}
+      <div class="px-4 pt-16 sm:px-6">
+        {#if faceListLoading && faceList.length === 0}
+          <div class="flex justify-center py-10"><LoadingSpinner /></div>
+        {:else if faceList.length === 0}
+          <p class="py-10 text-center text-gray-500">{$t('no_results')}</p>
+        {:else}
+          <div class="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11">
+            {#each faceList as face (face.id)}
+              <a
+                href={Route.viewAsset({ id: face.assetId })}
+                class="block aspect-square overflow-hidden rounded bg-gray-200 dark:bg-gray-800"
+                title={person.name}
+              >
+                <img
+                  src={`/api/faces/${face.id}/thumbnail`}
+                  alt={person.name || ''}
+                  loading="lazy"
+                  class="h-full w-full object-cover"
+                />
+              </a>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else}
     <Timeline
       enableRouting={true}
       {person}
@@ -450,6 +537,7 @@
         </div>
       {/if}
     </Timeline>
+    {/if}
   {/key}
 </main>
 
@@ -495,8 +583,25 @@
     {#if viewMode === PersonPageViewMode.VIEW_ASSETS}
       <ControlAppBar showBackButton backIcon={mdiArrowLeft} onClose={() => goto(previousRoute)}>
         {#snippet trailing()}
+          <IconButton
+            shape="round"
+            color="secondary"
+            variant="ghost"
+            aria-label={showFaceThumbnails ? $t('show_full_thumbnails') : $t('show_face_thumbnails')}
+            icon={showFaceThumbnails ? mdiImageMultiple : mdiFaceMan}
+            onclick={() => (showFaceThumbnails = !showFaceThumbnails)}
+          />
           <ContextMenuButton
-            items={[SelectFeaturePhoto, HidePerson, ShowPerson, SetDateOfBirth, Merge, Favorite, Unfavorite]}
+            items={[
+              SelectFeaturePhoto,
+              CreatePersonShareLink,
+              HidePerson,
+              ShowPerson,
+              SetDateOfBirth,
+              Merge,
+              Favorite,
+              Unfavorite,
+            ]}
             aria-label={$t('open')}
           />
         {/snippet}

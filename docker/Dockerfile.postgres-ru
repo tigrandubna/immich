@@ -1,0 +1,18 @@
+FROM ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+
+USER root
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends locales; \
+    sed -i -e 's/# ru_RU.UTF-8 UTF-8/ru_RU.UTF-8 UTF-8/' /etc/locale.gen; \
+    sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
+    locale-gen; \
+    update-locale LANG=ru_RU.UTF-8 LC_COLLATE=ru_RU.UTF-8 LC_CTYPE=ru_RU.UTF-8; \
+    rm -rf /var/lib/apt/lists/*
+
+ENV LANG=ru_RU.UTF-8
+ENV LC_ALL=ru_RU.UTF-8
+ENV LC_COLLATE=ru_RU.UTF-8
+ENV LC_CTYPE=ru_RU.UTF-8
+
+USER postgres

@@ -5,8 +5,9 @@ import _ from 'lodash';
 import { InjectKysely } from 'nestjs-kysely';
 import { Album, columns } from 'src/database';
 import { ChunkedArray, DummyValue, GenerateSql } from 'src/decorators';
-import { AlbumUserRole, SharedLinkType } from 'src/enum';
+import { AlbumUserRole, AssetVisibility, SharedLinkType } from 'src/enum';
 import { DB } from 'src/schema';
+import { hasPeople } from 'src/utils/database';
 import { AssetExifTable } from 'src/schema/tables/asset-exif.table';
 import { AssetTable } from 'src/schema/tables/asset.table';
 import { SharedLinkTable } from 'src/schema/tables/shared-link.table';
@@ -114,7 +115,13 @@ export class SharedLinkRepository {
       .select((eb) => eb.fn.toJson(eb.table('album')).$castTo<ShallowDehydrateObject<Album> | null>().as('album'))
       .where('shared_link.id', '=', id)
       .where('shared_link.userId', '=', userId)
-      .where((eb) => eb.or([eb('shared_link.type', '=', SharedLinkType.Individual), eb('album.id', 'is not', null)]))
+      .where((eb) =>
+        eb.or([
+          eb('shared_link.type', '=', SharedLinkType.Individual),
+          eb('shared_link.type', '=', SharedLinkType.Person),
+          eb('album.id', 'is not', null),
+        ]),
+      )
       .orderBy('shared_link.createdAt', 'desc')
       .executeTakeFirst();
   }
@@ -135,7 +142,13 @@ export class SharedLinkRepository {
         (join) => join.onTrue(),
       )
       .select((eb) => eb.fn.toJson('album').$castTo<ShallowDehydrateObject<Album> | null>().as('album'))
-      .where((eb) => eb.or([eb('shared_link.type', '=', SharedLinkType.Individual), eb('album.id', 'is not', null)]))
+      .where((eb) =>
+        eb.or([
+          eb('shared_link.type', '=', SharedLinkType.Individual),
+          eb('shared_link.type', '=', SharedLinkType.Person),
+          eb('album.id', 'is not', null),
+        ]),
+      )
       .$if(!!albumId, (eb) => eb.where('shared_link.albumId', '=', albumId!))
       .$if(!!id, (eb) => eb.where('shared_link.id', '=', id!))
       .orderBy('shared_link.createdAt', 'desc')
@@ -170,7 +183,13 @@ export class SharedLinkRepository {
           eb.selectFrom('user').select(columns.authUser).whereRef('user.id', '=', 'shared_link.userId'),
         ).as('user'),
       ])
-      .where((eb) => eb.or([eb('shared_link.type', '=', SharedLinkType.Individual), eb('album.id', 'is not', null)]));
+      .where((eb) =>
+        eb.or([
+          eb('shared_link.type', '=', SharedLinkType.Individual),
+          eb('shared_link.type', '=', SharedLinkType.Person),
+          eb('album.id', 'is not', null),
+        ]),
+      );
   }
 
   async create(entity: Insertable<SharedLinkTable> & { assetIds?: string[] }) {
@@ -210,6 +229,21 @@ export class SharedLinkRepository {
 
   async remove(id: string): Promise<void> {
     await this.db.deleteFrom('shared_link').where('shared_link.id', '=', id).execute();
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  getAssetsForPersonShare(ownerId: string, personId: string) {
+    return this.db
+      .selectFrom('asset')
+      .selectAll('asset')
+      .innerJoinLateral(withExifInfo, (join) => join.onTrue())
+      .select((eb) => eb.fn.toJson('exifInfo').as('exifInfo'))
+      .where('asset.ownerId', '=', ownerId)
+      .where('asset.deletedAt', 'is', null)
+      .where('asset.visibility', '=', AssetVisibility.Timeline)
+      .$call((qb) => hasPeople(qb, [personId]))
+      .orderBy('asset.fileCreatedAt', 'desc')
+      .execute();
   }
 
   @ChunkedArray({ paramIndex: 1 })

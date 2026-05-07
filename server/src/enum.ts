@@ -307,6 +307,11 @@ export enum SharedLinkType {
    * or group of assets that are not in an album
    */
   Individual = 'INDIVIDUAL',
+
+  /**
+   * All assets containing a specific person
+   */
+  Person = 'PERSON',
 }
 
 export const SharedLinkTypeSchema = z.enum(SharedLinkType).describe('Shared link type').meta({ id: 'SharedLinkType' });
@@ -842,6 +847,7 @@ export enum JobName {
   SidecarQueueAll = 'SidecarQueueAll',
   SidecarCheck = 'SidecarCheck',
   SidecarWrite = 'SidecarWrite',
+  SidecarWriteFaces = 'SidecarWriteFaces',
 
   SmartSearchQueueAll = 'SmartSearchQueueAll',
   SmartSearch = 'SmartSearch',

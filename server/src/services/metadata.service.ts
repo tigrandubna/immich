@@ -443,8 +443,10 @@ export class MetadataService extends BaseService {
       return;
     }
 
+    const { metadata } = await this.getConfig({ withCache: true });
+
     let sidecarPath = null;
-    for (const candidate of this.getSidecarCandidates(asset)) {
+    for (const candidate of this.getSidecarCandidates(asset, metadata.faces.readFromSubfolder)) {
       const exists = await this.storageRepository.checkFileExists(candidate, constants.R_OK);
       if (!exists) {
         continue;
@@ -485,6 +487,66 @@ export class MetadataService extends BaseService {
   @OnEvent({ name: 'AssetUntag' })
   async handleUntagAsset({ assetId }: ArgOf<'AssetUntag'>) {
     await this.jobRepository.queue({ name: JobName.SidecarWrite, data: { id: assetId } });
+  }
+
+  @OnJob({ name: JobName.SidecarWriteFaces, queue: QueueName.Sidecar })
+  async handleSidecarWriteFaces({ id }: JobOf<JobName.SidecarWriteFaces>): Promise<JobStatus> {
+    const { metadata } = await this.getConfig({ withCache: true });
+    if (!metadata.faces.writeFaces) {
+      return JobStatus.Skipped;
+    }
+
+    const asset = await this.assetJobRepository.getForSidecarCheckJob(id);
+    if (!asset) {
+      return JobStatus.Failed;
+    }
+
+    const faces = await this.personRepository.getFaces(id);
+    const named = faces.filter((f) => f.person?.name && f.personId);
+
+    const candidates = this.getSidecarCandidates(asset, true);
+    let target: string | null = null;
+    for (const candidate of candidates) {
+      if (await this.storageRepository.checkFileExists(candidate, constants.R_OK)) {
+        target = candidate;
+        break;
+      }
+    }
+    if (target === null) {
+      const parsed = parse(asset.originalPath);
+      target = join(parsed.dir, 'xmp', `${parsed.name}.xmp`);
+    }
+
+    if (named.length === 0) {
+      return JobStatus.Skipped;
+    }
+
+    const imageWidth = named[0].imageWidth || 0;
+    const imageHeight = named[0].imageHeight || 0;
+    if (!imageWidth || !imageHeight) {
+      this.logger.warn(`Cannot write face regions for ${asset.originalPath} — missing image dimensions`);
+      return JobStatus.Skipped;
+    }
+
+    await this.metadataRepository.writeFaceRegions(target, {
+      imageWidth,
+      imageHeight,
+      faces: named.map((f) => ({
+        name: f.person!.name,
+        x1: f.boundingBoxX1,
+        y1: f.boundingBoxY1,
+        x2: f.boundingBoxX2,
+        y2: f.boundingBoxY2,
+      })),
+    });
+
+    // Persist the sidecar reference if this is a newly-created file.
+    const sidecarFile = asset.files?.find((file) => file.type === AssetFileType.Sidecar);
+    if (!sidecarFile || sidecarFile.path !== target) {
+      await this.assetRepository.upsertFile({ assetId: id, type: AssetFileType.Sidecar, path: target });
+    }
+
+    return JobStatus.Success;
   }
 
   @OnJob({ name: JobName.SidecarWrite, queue: QueueName.Sidecar })
@@ -541,7 +603,10 @@ export class MetadataService extends BaseService {
     return JobStatus.Success;
   }
 
-  private getSidecarCandidates({ files, originalPath }: { files: AssetFile[]; originalPath: string }) {
+  private getSidecarCandidates(
+    { files, originalPath }: { files: AssetFile[]; originalPath: string },
+    includeSubfolder = false,
+  ) {
     const candidates: string[] = [];
 
     const { sidecarFile } = getAssetFiles(files);
@@ -557,6 +622,16 @@ export class MetadataService extends BaseService {
       // IMG_123.xmp
       `${join(assetPath.dir, assetPath.name)}.xmp`,
     );
+
+    if (includeSubfolder) {
+      // xmp/ subfolder candidates — lower priority than same-folder
+      candidates.push(
+        // <dir>/xmp/IMG_123.jpg.xmp
+        join(assetPath.dir, 'xmp', `${assetPath.base}.xmp`),
+        // <dir>/xmp/IMG_123.xmp
+        join(assetPath.dir, 'xmp', `${assetPath.name}.xmp`),
+      );
+    }
 
     return candidates;
   }

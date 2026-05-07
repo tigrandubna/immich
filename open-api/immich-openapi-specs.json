@@ -5473,6 +5473,51 @@
         "x-immich-state": "Stable"
       }
     },
+    "/faces/{id}/thumbnail": {
+      "get": {
+        "description": "Return a cropped JPEG centered on the face bounding box of the given face.",
+        "operationId": "getFaceThumbnail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Get a face thumbnail",
+        "tags": [
+          "Faces"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v1",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "face.read"
+      }
+    },
     "/jobs": {
       "get": {
         "deprecated": true,
@@ -8335,6 +8380,51 @@
         ],
         "x-immich-permission": "person.update",
         "x-immich-state": "Stable"
+      }
+    },
+    "/people/{id}/faces": {
+      "get": {
+        "description": "Return faces belonging to the given person, with their asset IDs, ordered by capture date desc.",
+        "operationId": "getPersonFacesList",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "List faces of a person",
+        "tags": [
+          "People"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v1",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "person.read"
       }
     },
     "/people/{id}/merge": {
@@ -17914,6 +18004,7 @@
           "SidecarQueueAll",
           "SidecarCheck",
           "SidecarWrite",
+          "SidecarWriteFaces",
           "SmartSearchQueueAll",
           "SmartSearch",
           "StorageTemplateMigration",
@@ -21669,6 +21760,12 @@
             "nullable": true,
             "type": "string"
           },
+          "personId": {
+            "description": "Person ID (for person sharing)",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string"
+          },
           "showMetadata": {
             "default": true,
             "description": "Show metadata",
@@ -21798,6 +21895,11 @@
             "nullable": true,
             "type": "string"
           },
+          "personId": {
+            "description": "Person ID (for person-shared links)",
+            "nullable": true,
+            "type": "string"
+          },
           "showMetadata": {
             "description": "Show metadata",
             "type": "boolean"
@@ -21825,6 +21927,7 @@
           "id",
           "key",
           "password",
+          "personId",
           "showMetadata",
           "slug",
           "type",
@@ -21836,7 +21939,8 @@
         "description": "Shared link type",
         "enum": [
           "ALBUM",
-          "INDIVIDUAL"
+          "INDIVIDUAL",
+          "PERSON"
         ],
         "type": "string"
       },
@@ -24162,10 +24266,20 @@
           "import": {
             "description": "Import",
             "type": "boolean"
+          },
+          "readFromSubfolder": {
+            "description": "Read XMP sidecars from xmp/ subfolder",
+            "type": "boolean"
+          },
+          "writeFaces": {
+            "description": "Write recognized faces back to XMP sidecars",
+            "type": "boolean"
           }
         },
         "required": [
-          "import"
+          "import",
+          "readFromSubfolder",
+          "writeFaces"
         ],
         "type": "object"
       },

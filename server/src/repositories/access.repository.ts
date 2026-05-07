@@ -230,7 +230,9 @@ class AssetAccess {
       return new Set<string>();
     }
 
-    return this.db
+    const allowedIds = new Set<string>();
+
+    const albumIndividualRows = await this.db
       .selectFrom('shared_link')
       .leftJoin('album', (join) => join.onRef('album.id', '=', 'shared_link.albumId').on('album.deletedAt', 'is', null))
       .leftJoin('shared_link_asset', 'shared_link_asset.sharedLinkId', 'shared_link.id')
@@ -253,25 +255,44 @@ class AssetAccess {
         '&&',
         sql`array[${sql.join([...assetIds])}]::uuid[] `,
       )
-      .execute()
-      .then((rows) => {
-        const allowedIds = new Set<string>();
-        for (const row of rows) {
-          if (row.assetId && assetIds.has(row.assetId)) {
-            allowedIds.add(row.assetId);
-          }
-          if (row.assetLivePhotoVideoId && assetIds.has(row.assetLivePhotoVideoId)) {
-            allowedIds.add(row.assetLivePhotoVideoId);
-          }
-          if (row.albumAssetId && assetIds.has(row.albumAssetId)) {
-            allowedIds.add(row.albumAssetId);
-          }
-          if (row.albumAssetLivePhotoVideoId && assetIds.has(row.albumAssetLivePhotoVideoId)) {
-            allowedIds.add(row.albumAssetLivePhotoVideoId);
-          }
-        }
-        return allowedIds;
-      });
+      .execute();
+
+    for (const row of albumIndividualRows) {
+      if (row.assetId && assetIds.has(row.assetId)) {
+        allowedIds.add(row.assetId);
+      }
+      if (row.assetLivePhotoVideoId && assetIds.has(row.assetLivePhotoVideoId)) {
+        allowedIds.add(row.assetLivePhotoVideoId);
+      }
+      if (row.albumAssetId && assetIds.has(row.albumAssetId)) {
+        allowedIds.add(row.albumAssetId);
+      }
+      if (row.albumAssetLivePhotoVideoId && assetIds.has(row.albumAssetLivePhotoVideoId)) {
+        allowedIds.add(row.albumAssetLivePhotoVideoId);
+      }
+    }
+
+    const personRows = await this.db
+      .selectFrom('shared_link')
+      .innerJoin('asset_face', 'asset_face.personId', 'shared_link.personId')
+      .innerJoin('asset', (join) => join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null))
+      .select(['asset.id as assetId', 'asset.livePhotoVideoId as assetLivePhotoVideoId'])
+      .where('shared_link.id', '=', sharedLinkId)
+      .where('shared_link.personId', 'is not', null)
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset.id', 'in', [...assetIds])
+      .execute();
+
+    for (const row of personRows) {
+      if (row.assetId && assetIds.has(row.assetId)) {
+        allowedIds.add(row.assetId);
+      }
+      if (row.assetLivePhotoVideoId && assetIds.has(row.assetLivePhotoVideoId)) {
+        allowedIds.add(row.assetLivePhotoVideoId);
+      }
+    }
+
+    return allowedIds;
   }
 }
 

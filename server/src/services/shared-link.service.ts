@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { PostgresError } from 'postgres';
+import { SharedLink } from 'src/database';
 import { AssetIdErrorReason, AssetIdsResponseDto } from 'src/dtos/asset-ids.response.dto';
 import { AssetIdsDto } from 'src/dtos/asset.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
@@ -39,6 +40,7 @@ export class SharedLinkService extends BaseService {
       throw new UnauthorizedException('Invalid password');
     }
 
+    await this.populatePersonAssets(sharedLink);
     return {
       sharedLink: mapSharedLink(sharedLink, { stripAssetMetadata: !sharedLink.showExif }),
       token: this.asToken({ id, password }),
@@ -57,11 +59,13 @@ export class SharedLinkService extends BaseService {
       throw new UnauthorizedException('Password required');
     }
 
+    await this.populatePersonAssets(sharedLink);
     return mapSharedLink(sharedLink, { stripAssetMetadata: !sharedLink.showExif });
   }
 
   async get(auth: AuthDto, id: string): Promise<SharedLinkResponseDto> {
     const sharedLink = await this.findOrFail(auth.user.id, id);
+    await this.populatePersonAssets(sharedLink);
     return mapSharedLink(sharedLink, { stripAssetMetadata: false });
   }
 
@@ -84,6 +88,14 @@ export class SharedLinkService extends BaseService {
 
         break;
       }
+
+      case SharedLinkType.Person: {
+        if (!dto.personId) {
+          throw new BadRequestException('Invalid personId');
+        }
+        await this.requireAccess({ auth, permission: Permission.PersonRead, ids: [dto.personId] });
+        break;
+      }
     }
 
     try {
@@ -92,7 +104,8 @@ export class SharedLinkService extends BaseService {
         userId: auth.user.id,
         type: dto.type,
         albumId: dto.albumId || null,
-        assetIds: dto.assetIds,
+        personId: dto.personId || null,
+        assetIds: dto.type === SharedLinkType.Person ? undefined : dto.assetIds,
         description: dto.description || null,
         password: dto.password,
         expiresAt: dto.expiresAt || null,
@@ -102,10 +115,19 @@ export class SharedLinkService extends BaseService {
         slug: dto.slug || null,
       });
 
+      await this.populatePersonAssets(sharedLink);
       return mapSharedLink(sharedLink, { stripAssetMetadata: false });
     } catch (error) {
       this.handleError(error);
     }
+  }
+
+  private async populatePersonAssets(sharedLink: SharedLink): Promise<void> {
+    if (sharedLink.type !== SharedLinkType.Person || !sharedLink.personId) {
+      return;
+    }
+    const assets = await this.sharedLinkRepository.getAssetsForPersonShare(sharedLink.userId, sharedLink.personId);
+    sharedLink.assets = assets as unknown as SharedLink['assets'];
   }
 
   private handleError(error: unknown): never {

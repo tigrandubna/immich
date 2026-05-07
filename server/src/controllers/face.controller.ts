@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, HttpCode, HttpStatus, Param, Post, Put, Query, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { Endpoint, HistoryBuilder } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
@@ -67,5 +68,23 @@ export class FaceController {
   })
   deleteFace(@Auth() auth: AuthDto, @Param() { id }: UUIDParamDto, @Body() dto: AssetFaceDeleteDto): Promise<void> {
     return this.service.deleteFace(auth, id, dto);
+  }
+
+  @Get(':id/thumbnail')
+  @Authenticated({ permission: Permission.FaceRead })
+  @Header('Content-Type', 'image/jpeg')
+  @Header('Cache-Control', 'private, max-age=86400')
+  @Endpoint({
+    summary: 'Get a face thumbnail',
+    description: 'Return a cropped JPEG centered on the face bounding box of the given face.',
+    history: new HistoryBuilder().added('v1'),
+  })
+  async getFaceThumbnail(
+    @Res() res: Response,
+    @Auth() auth: AuthDto,
+    @Param() { id }: UUIDParamDto,
+  ): Promise<void> {
+    const buffer = await this.service.getFaceThumbnailBuffer(auth, id);
+    res.send(buffer);
   }
 }

@@ -9,6 +9,7 @@ import {
 } from '@immich/sql-tools';
 import { SharedLinkType } from 'src/enum';
 import { AlbumTable } from 'src/schema/tables/album.table';
+import { PersonTable } from 'src/schema/tables/person.table';
 import { UserTable } from 'src/schema/tables/user.table';
 
 @Table('shared_link')
@@ -51,4 +52,7 @@ export class SharedLinkTable {
 
   @Column({ type: 'character varying', nullable: true, unique: true })
   slug!: string | null;
+
+  @ForeignKeyColumn(() => PersonTable, { nullable: true, onDelete: 'CASCADE', onUpdate: 'CASCADE' })
+  personId!: string | null;
 }

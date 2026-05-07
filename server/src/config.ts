@@ -93,6 +93,8 @@ export type SystemConfig = {
   metadata: {
     faces: {
       import: boolean;
+      readFromSubfolder: boolean;
+      writeFaces: boolean;
     };
   };
   oauth: {
@@ -287,6 +289,8 @@ export const defaults = Object.freeze<SystemConfig>({
   metadata: {
     faces: {
       import: false,
+      readFromSubfolder: false,
+      writeFaces: false,
     },
   },
   oauth: {

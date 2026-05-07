@@ -233,7 +233,11 @@ const SystemConfigReverseGeocodingSchema = z
   .meta({ id: 'SystemConfigReverseGeocodingDto' });
 
 const SystemConfigFacesSchema = z
-  .object({ import: configBool.describe('Import') })
+  .object({
+    import: configBool.describe('Import'),
+    readFromSubfolder: configBool.describe('Read XMP sidecars from xmp/ subfolder'),
+    writeFaces: configBool.describe('Write recognized faces back to XMP sidecars'),
+  })
   .meta({ id: 'SystemConfigFacesDto' });
 const SystemConfigMetadataSchema = z.object({ faces: SystemConfigFacesSchema }).meta({ id: 'SystemConfigMetadataDto' });
 
