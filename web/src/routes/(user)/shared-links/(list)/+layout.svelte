@@ -34,6 +34,7 @@
     all: $t('all'),
     album: $t('albums'),
     individual: $t('individual_shares'),
+    person: $t('person_shares'),
   };
 
   let filters = Object.keys(filterMap);
@@ -51,7 +52,8 @@
       ({ type }) =>
         selectedTab === 'all' ||
         (type === SharedLinkType.Album && selectedTab === 'album') ||
-        (type === SharedLinkType.Individual && selectedTab === 'individual'),
+        (type === SharedLinkType.Individual && selectedTab === 'individual') ||
+        (type === SharedLinkType.Person && selectedTab === 'person'),
     ),
   );
 
