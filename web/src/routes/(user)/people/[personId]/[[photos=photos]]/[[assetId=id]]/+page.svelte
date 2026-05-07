@@ -398,33 +398,35 @@
     },
   }}
 >
-  {#key `${person.id}:${showFaceThumbnails}`}
-    {#if showFaceThumbnails}
-      <div class="immich-scrollbar h-full overflow-y-auto px-4 pt-16 pb-8 sm:px-6">
-        {#if faceListLoading && faceList.length === 0}
-          <div class="flex justify-center py-10"><LoadingSpinner /></div>
-        {:else if faceList.length === 0}
-          <p class="py-10 text-center text-gray-500">{$t('no_results')}</p>
-        {:else}
-          <div class="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11">
-            {#each faceList as face (face.id)}
-              <a
-                href={Route.viewAsset({ id: face.assetId })}
-                class="block aspect-square overflow-hidden rounded bg-gray-200 dark:bg-gray-800"
-                title={person.name}
-              >
-                <img
-                  src={`/api/faces/${face.id}/thumbnail`}
-                  alt={person.name || ''}
-                  loading="lazy"
-                  class="h-full w-full object-cover"
-                />
-              </a>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {:else}
+  {#key person.id}
+    <div
+      class="immich-scrollbar h-full overflow-y-auto px-4 pt-16 pb-8 sm:px-6"
+      class:hidden={!showFaceThumbnails}
+    >
+      {#if faceListLoading && faceList.length === 0}
+        <div class="flex justify-center py-10"><LoadingSpinner /></div>
+      {:else if faceList.length === 0}
+        <p class="py-10 text-center text-gray-500">{$t('no_results')}</p>
+      {:else}
+        <div class="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11">
+          {#each faceList as face (face.id)}
+            <a
+              href={Route.viewAsset({ id: face.assetId })}
+              class="block aspect-square overflow-hidden rounded bg-gray-200 dark:bg-gray-800"
+              title={person.name}
+            >
+              <img
+                src={`/api/faces/${face.id}/thumbnail`}
+                alt={person.name || ''}
+                loading="lazy"
+                class="h-full w-full object-cover"
+              />
+            </a>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    <div class="h-full" class:hidden={showFaceThumbnails}>
     <Timeline
       enableRouting={true}
       {person}
@@ -537,7 +539,7 @@
         </div>
       {/if}
     </Timeline>
-    {/if}
+    </div>
   {/key}
 </main>
 
