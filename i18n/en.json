@@ -1340,6 +1340,7 @@
   "individual_share": "Individual share",
   "individual_shares": "Individual shares",
   "info": "Info",
+  "person_share": "Person share",
   "interval": {
     "day_at_onepm": "Every day at 1pm",
     "hours": "Every {hours, plural, one {hour} other {{hours, number} hours}}",

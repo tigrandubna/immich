@@ -75,6 +75,7 @@ const SharedLinkResponseSchema = z
     showMetadata: z.boolean().describe('Show metadata'),
     slug: z.string().nullable().describe('Custom URL slug'),
     personId: z.string().nullable().describe('Person ID (for person-shared links)'),
+    personName: z.string().nullable().optional().describe('Person name (for person-shared links)'),
   })
   .describe('Shared link response')
   .meta({ id: 'SharedLinkResponseDto' });
@@ -104,6 +105,7 @@ export function mapSharedLink(sharedLink: SharedLink, options: { stripAssetMetad
     showMetadata: sharedLink.showExif,
     slug: sharedLink.slug,
     personId: sharedLink.personId ?? null,
+    personName: sharedLink.personName ?? null,
   };
 
   // unless we select sharedLink.album.sharedLinks this will be wrong

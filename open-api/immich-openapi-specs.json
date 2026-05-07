@@ -21915,6 +21915,11 @@
             "nullable": true,
             "type": "string"
           },
+          "personName": {
+            "description": "Person name (for person-shared links)",
+            "nullable": true,
+            "type": "string"
+          },
           "showMetadata": {
             "description": "Show metadata",
             "type": "boolean"

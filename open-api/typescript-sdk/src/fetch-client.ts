@@ -2208,6 +2208,10 @@ export type SharedLinkResponseDto = {
     "type": SharedLinkType;
     /** Owner user ID */
     userId: string;
+    /** Person ID (for person-shared links) */
+    personId: string | null;
+    /** Person name (for person-shared links) */
+    personName?: string | null;
 };
 export type SharedLinkCreateDto = {
     /** Album ID (for album sharing) */
@@ -2229,6 +2233,8 @@ export type SharedLinkCreateDto = {
     /** Custom URL slug */
     slug?: string | null;
     "type": SharedLinkType;
+    /** Person ID (for person sharing) */
+    personId?: string;
 };
 export type SharedLinkLoginDto = {
     /** Shared link password */
@@ -7138,7 +7144,8 @@ export enum SearchSuggestionType {
 }
 export enum SharedLinkType {
     Album = "ALBUM",
-    Individual = "INDIVIDUAL"
+    Individual = "INDIVIDUAL",
+    Person = "PERSON"
 }
 export enum AssetIdErrorReason {
     Duplicate = "duplicate",

@@ -1335,6 +1335,7 @@
   "individual_share": "Индивидуальная подборка",
   "individual_shares": "Подборки",
   "info": "Информация",
+  "person_share": "Подборка по человеку",
   "interval": {
     "day_at_onepm": "Каждый день в 13:00",
     "hours": "{hours, plural, one {Каждый час} many {Каждые # часов} other {Каждые # часа}}",

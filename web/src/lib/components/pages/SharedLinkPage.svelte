@@ -113,3 +113,8 @@
     <IndividualSharedViewer {sharedLink} {isOwned} />
   </div>
 {/if}
+{#if !passwordRequired && sharedLink?.type === SharedLinkType.Person}
+  <div class="immich-scrollbar">
+    <IndividualSharedViewer {sharedLink} {isOwned} />
+  </div>
+{/if}

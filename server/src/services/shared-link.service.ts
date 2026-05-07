@@ -19,9 +19,9 @@ import { getExternalDomain, OpenGraphTags } from 'src/utils/misc';
 @Injectable()
 export class SharedLinkService extends BaseService {
   async getAll(auth: AuthDto, { id, albumId }: SharedLinkSearchDto): Promise<SharedLinkResponseDto[]> {
-    return this.sharedLinkRepository
-      .getAll({ userId: auth.user.id, id, albumId })
-      .then((links) => links.map((link) => mapSharedLink(link, { stripAssetMetadata: false })));
+    const links = await this.sharedLinkRepository.getAll({ userId: auth.user.id, id, albumId });
+    await this.enrichPersonNames(links);
+    return links.map((link) => mapSharedLink(link, { stripAssetMetadata: false }));
   }
 
   async login(auth: AuthDto, dto: SharedLinkLoginDto) {
@@ -126,8 +126,29 @@ export class SharedLinkService extends BaseService {
     if (sharedLink.type !== SharedLinkType.Person || !sharedLink.personId) {
       return;
     }
-    const assets = await this.sharedLinkRepository.getAssetsForPersonShare(sharedLink.userId, sharedLink.personId);
+    const [assets, person] = await Promise.all([
+      this.sharedLinkRepository.getAssetsForPersonShare(sharedLink.userId, sharedLink.personId),
+      this.personRepository.getById(sharedLink.personId),
+    ]);
     sharedLink.assets = assets as unknown as SharedLink['assets'];
+    sharedLink.personName = person?.name ?? null;
+  }
+
+  private async enrichPersonNames(links: SharedLink[]): Promise<void> {
+    const personIds = [...new Set(links.filter((l) => l.personId).map((l) => l.personId!))];
+    if (personIds.length === 0) {
+      return;
+    }
+    const persons = await Promise.all(personIds.map((id) => this.personRepository.getById(id)));
+    const nameById = new Map<string, string>();
+    for (const p of persons) {
+      if (p) nameById.set(p.id, p.name);
+    }
+    for (const link of links) {
+      if (link.personId) {
+        link.personName = nameById.get(link.personId) ?? null;
+      }
+    }
   }
 
   private handleError(error: unknown): never {

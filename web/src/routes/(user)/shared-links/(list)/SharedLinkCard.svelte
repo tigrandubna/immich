@@ -82,6 +82,8 @@
             {sharedLink.album?.albumName}
           {:else if sharedLink.type === SharedLinkType.Individual}
             {$t('individual_share')}
+          {:else if sharedLink.type === SharedLinkType.Person}
+            {sharedLink.personName || $t('person_share')}
           {/if}
         </Text>
 
