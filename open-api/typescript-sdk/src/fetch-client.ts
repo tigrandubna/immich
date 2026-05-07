@@ -2482,6 +2482,10 @@ export type SystemConfigMapDto = {
 export type SystemConfigFacesDto = {
     /** Import */
     "import": boolean;
+    /** Read XMP sidecars from .xmp/ subfolder */
+    readFromSubfolder: boolean;
+    /** Write recognized faces back to XMP sidecars */
+    writeFaces: boolean;
 };
 export type SystemConfigMetadataDto = {
     faces: SystemConfigFacesDto;
