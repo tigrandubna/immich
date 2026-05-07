@@ -193,9 +193,13 @@ export class PersonService extends BaseService {
   }
 
   async getFaceThumbnailFile(auth: AuthDto, faceId: string): Promise<ImmichFileResponse> {
-    await this.requireAccess({ auth, permission: Permission.AssetRead, ids: [faceId] });
+    const face = await this.personRepository.getFaceForThumbnailJob(faceId);
+    if (!face?.assetId || !face.asset?.ownerId) {
+      throw new NotFoundException();
+    }
+    await this.requireAccess({ auth, permission: Permission.AssetRead, ids: [face.assetId] });
 
-    const path = await this.ensureFaceThumbnail(faceId);
+    const path = await this.ensureFaceThumbnail(face);
     return new ImmichFileResponse({
       path,
       contentType: 'image/jpeg',
@@ -203,12 +207,9 @@ export class PersonService extends BaseService {
     });
   }
 
-  private async ensureFaceThumbnail(faceId: string): Promise<string> {
-    const face = await this.personRepository.getFaceForThumbnailJob(faceId);
-    if (!face?.assetId || !face.asset?.ownerId) {
-      throw new NotFoundException();
-    }
-
+  private async ensureFaceThumbnail(
+    face: NonNullable<Awaited<ReturnType<typeof this.personRepository.getFaceForThumbnailJob>>>,
+  ): Promise<string> {
     if (face.thumbnailPath && (await this.storageRepository.checkFileExists(face.thumbnailPath, fsConstants.R_OK))) {
       return face.thumbnailPath;
     }
@@ -216,7 +217,7 @@ export class PersonService extends BaseService {
     return this.generateFaceThumbnail({
       id: face.id,
       assetId: face.assetId,
-      ownerId: face.asset.ownerId,
+      ownerId: face.asset!.ownerId,
       boundingBoxX1: face.boundingBoxX1,
       boundingBoxY1: face.boundingBoxY1,
       boundingBoxX2: face.boundingBoxX2,
@@ -277,7 +278,11 @@ export class PersonService extends BaseService {
   @OnJob({ name: JobName.FaceGenerateThumbnail, queue: QueueName.FaceThumbnail })
   async handleGenerateFaceThumbnail({ id }: JobOf<JobName.FaceGenerateThumbnail>): Promise<JobStatus> {
     try {
-      await this.ensureFaceThumbnail(id);
+      const face = await this.personRepository.getFaceForThumbnailJob(id);
+      if (!face?.assetId || !face.asset?.ownerId) {
+        return JobStatus.Skipped;
+      }
+      await this.ensureFaceThumbnail(face);
       return JobStatus.Success;
     } catch (error) {
       this.logger.warn(`Failed to generate face thumbnail for ${id}: ${error}`);
