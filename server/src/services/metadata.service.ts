@@ -531,18 +531,7 @@ export class MetadataService extends BaseService {
     const faces = await this.personRepository.getFaces(id);
     const named = faces.filter((f) => f.person?.name && f.personId);
 
-    const candidates = this.getSidecarCandidates(asset, true);
-    let target: string | null = null;
-    for (const candidate of candidates) {
-      if (await this.storageRepository.checkFileExists(candidate, constants.R_OK)) {
-        target = candidate;
-        break;
-      }
-    }
-    if (target === null) {
-      const parsed = parse(asset.originalPath);
-      target = join(parsed.dir, '.xmp', `${parsed.name}.xmp`);
-    }
+    const target = await this.resolveSidecarTarget(asset, metadata.faces.readFromSubfolder);
 
     if (named.length === 0) {
       return JobStatus.Skipped;
@@ -586,8 +575,8 @@ export class MetadataService extends BaseService {
 
     const lockedProperties = await this.assetJobRepository.getLockedPropertiesForMetadataExtraction(id);
 
-    const { sidecarFile } = getAssetFiles(asset.files);
-    const sidecarPath = sidecarFile?.path || `${asset.originalPath}.xmp`;
+    const { metadata } = await this.getConfig({ withCache: true });
+    const sidecarPath = await this.resolveSidecarTarget(asset, metadata.faces.readFromSubfolder);
 
     const { description, dateTimeOriginal, latitude, longitude, rating, tags, timeZone } = _.pick(
       {
@@ -628,6 +617,22 @@ export class MetadataService extends BaseService {
     await this.assetRepository.unlockProperties(asset.id, lockedProperties);
 
     return JobStatus.Success;
+  }
+
+  private async resolveSidecarTarget(
+    asset: { files: AssetFile[]; originalPath: string },
+    preferSubfolder: boolean,
+  ): Promise<string> {
+    for (const candidate of this.getSidecarCandidates(asset, preferSubfolder)) {
+      if (await this.storageRepository.checkFileExists(candidate, constants.R_OK)) {
+        return candidate;
+      }
+    }
+    const parsed = parse(asset.originalPath);
+    if (preferSubfolder) {
+      return join(parsed.dir, '.xmp', `${parsed.name}.xmp`);
+    }
+    return `${asset.originalPath}.xmp`;
   }
 
   private getSidecarCandidates(
