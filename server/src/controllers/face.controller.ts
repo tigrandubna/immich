@@ -89,6 +89,18 @@ export class FaceController {
     @Auth() auth: AuthDto,
     @Param() { id }: UUIDParamDto,
   ): Promise<void> {
-    await sendFile(res, next, () => this.service.getFaceThumbnailFile(auth, id), this.logger);
+    await sendFile(
+      res,
+      next,
+      async () => {
+        try {
+          return await this.service.getFaceThumbnailFile(auth, id);
+        } catch (error) {
+          this.logger.warn(`Face thumbnail failed for ${id}: ${error instanceof Error ? error.message : error}`);
+          throw error;
+        }
+      },
+      this.logger,
+    );
   }
 }

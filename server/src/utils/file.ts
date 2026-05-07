@@ -77,7 +77,7 @@ export const sendFile = async (
       logger.error(`Unable to send file: ${error}`, error.stack);
     }
 
-    res.header('Cache-Control', 'none');
+    res.header('Cache-Control', 'no-store');
     next(error);
   }
 };
