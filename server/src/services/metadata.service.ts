@@ -514,7 +514,7 @@ export class MetadataService extends BaseService {
     }
     if (target === null) {
       const parsed = parse(asset.originalPath);
-      target = join(parsed.dir, 'xmp', `${parsed.name}.xmp`);
+      target = join(parsed.dir, '.xmp', `${parsed.name}.xmp`);
     }
 
     if (named.length === 0) {
@@ -624,12 +624,12 @@ export class MetadataService extends BaseService {
     );
 
     if (includeSubfolder) {
-      // xmp/ subfolder candidates — lower priority than same-folder
+      // .xmp/ subfolder candidates — lower priority than same-folder
       candidates.push(
-        // <dir>/xmp/IMG_123.jpg.xmp
-        join(assetPath.dir, 'xmp', `${assetPath.base}.xmp`),
-        // <dir>/xmp/IMG_123.xmp
-        join(assetPath.dir, 'xmp', `${assetPath.name}.xmp`),
+        // <dir>/.xmp/IMG_123.jpg.xmp
+        join(assetPath.dir, '.xmp', `${assetPath.base}.xmp`),
+        // <dir>/.xmp/IMG_123.xmp
+        join(assetPath.dir, '.xmp', `${assetPath.name}.xmp`),
       );
     }
 

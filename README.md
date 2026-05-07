@@ -4,9 +4,9 @@
 
 1. **Кириллическая база данных.** Кастомный образ Postgres ([`docker/Dockerfile.postgres-ru`](docker/Dockerfile.postgres-ru)) с локалью `ru_RU.UTF-8`. `initdb` инициализирует кластер с `--lc-collate=ru_RU.UTF-8 --lc-ctype=ru_RU.UTF-8`, поэтому `ORDER BY` по тексту автоматически использует русскую раскладку без правки запросов.
 
-2. **Чтение XMP из подпапки `xmp/`.** Опционально (тумблер «Read XMP from xmp/ subfolder» в Administration → System Settings → Metadata) Immich ищет XMP-файл не только рядом с фото, но и в подпапке `xmp/`. Приоритет: `<dir>/<name>.<ext>.xmp` → `<dir>/<name>.xmp` → `<dir>/xmp/<name>.<ext>.xmp` → `<dir>/xmp/<name>.xmp`. Реализовано в [`server/src/services/metadata.service.ts`](server/src/services/metadata.service.ts).
+2. **Чтение XMP из подпапки `.xmp/`.** Опционально (тумблер «Read XMP from .xmp/ subfolder» в Administration → System Settings → Metadata) Immich ищет XMP-файл не только рядом с фото, но и в подпапке `.xmp/`. Приоритет: `<dir>/<name>.<ext>.xmp` → `<dir>/<name>.xmp` → `<dir>/.xmp/<name>.<ext>.xmp` → `<dir>/.xmp/<name>.xmp`. Реализовано в [`server/src/services/metadata.service.ts`](server/src/services/metadata.service.ts).
 
-3. **Запись распознанных лиц в XMP.** Опциональный тумблер «Write recognized faces to XMP» включает новый job `SidecarWriteFaces`. Триггерится после ML-распознавания, ручного переназначения лица и переименования персоны. Пишет MWG-Region теги через exiftool в существующий XMP по той же логике приоритета, что и при чтении; если sidecar отсутствует — создаёт `<dir>/xmp/<name>.xmp`.
+3. **Запись распознанных лиц в XMP.** Опциональный тумблер «Write recognized faces to XMP» включает новый job `SidecarWriteFaces`. Триггерится после ML-распознавания, ручного переназначения лица и переименования персоны. Пишет MWG-Region теги через exiftool в существующий XMP по той же логике приоритета, что и при чтении; если sidecar отсутствует — создаёт `<dir>/.xmp/<name>.xmp`.
 
 4. **Секретная ссылка на персону.** Новый `SharedLinkType.Person` с миграцией, добавляющей `shared_link.personId`. В контекстном меню страницы персоны появилась команда «Создать ссылку для шаринга»: создаёт shareable URL вида `/share/<key>`, по которому видны все фотографии с этим человеком (включая будущие — резолв ассетов динамический). Отзыв через стандартную страницу управления Shared Links.
 

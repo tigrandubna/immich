@@ -53,7 +53,7 @@ docker exec immich_server ls /external/MyPhotos
 2. **Administration → External Libraries → Create Library**.
 3. Выберите пользователя-владельца библиотеки.
 4. **Import paths** → Add path → введите путь, как он виден изнутри контейнера (например, `/external/MyPhotos`) → Save.
-5. (Опционально) **Exclusion patterns** — например, `**/.DS_Store`, `**/xmp/**` если хотите игнорировать XMP-файлы как ассеты.
+5. (Опционально) **Exclusion patterns** — например, `**/.DS_Store`, `**/.xmp/**` если хотите игнорировать XMP-файлы как ассеты.
 6. Запустите **Scan** для библиотеки.
 
 После сканирования фотографии появятся в основной таймлайне.
@@ -70,8 +70,8 @@ docker exec immich_server ls /external/MyPhotos
 | Настройка | Что делает |
 |---|---|
 | Enable face import | Импортирует регионы лиц из EXIF/XMP при метаданных-скане. |
-| Read XMP from `xmp/` subfolder | При поиске XMP рядом с фото также смотрит подпапку `xmp/`. Приоритет — у файла в той же папке, что и фото. |
-| Write recognized faces to XMP | После распознавания / ручного переназначения / переименования персоны Immich пишет MWG-Region теги в XMP. Если sidecar отсутствует — создаёт `<dir>/xmp/<name>.xmp`. |
+| Read XMP from `.xmp/` subfolder | При поиске XMP рядом с фото также смотрит подпапку `.xmp/`. Приоритет — у файла в той же папке, что и фото. |
+| Write recognized faces to XMP | После распознавания / ручного переназначения / переименования персоны Immich пишет MWG-Region теги в XMP. Если sidecar отсутствует — создаёт `<dir>/.xmp/<name>.xmp`. |
 
 Чтобы Immich мог писать в XMP, монтируйте библиотеку без `:ro`.
 
@@ -85,12 +85,12 @@ MyPhotos/
 │   ├── IMG_0001.jpg
 │   ├── IMG_0001.jpg.xmp        ← приоритет 1 (full-name рядом с фото)
 │   ├── IMG_0001.xmp            ← приоритет 2 (basename рядом с фото)
-│   └── xmp/
+│   └── .xmp/
 │       ├── IMG_0001.jpg.xmp    ← приоритет 3 (subfolder full-name)
 │       └── IMG_0001.xmp        ← приоритет 4 (subfolder basename)
 ```
 
-Immich пробует кандидатов сверху вниз и берёт первый существующий. Подпапка `xmp/` проверяется только если включена опция «Read XMP from xmp/ subfolder».
+Immich пробует кандидатов сверху вниз и берёт первый существующий. Подпапка `.xmp/` проверяется только если включена опция «Read XMP from .xmp/ subfolder».
 
 ## Снять подключение папки
 
