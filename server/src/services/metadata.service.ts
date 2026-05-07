@@ -489,6 +489,33 @@ export class MetadataService extends BaseService {
     await this.jobRepository.queue({ name: JobName.SidecarWrite, data: { id: assetId } });
   }
 
+  @OnJob({ name: JobName.SidecarWriteFacesQueueAll, queue: QueueName.Sidecar })
+  async handleQueueSidecarWriteFaces(): Promise<JobStatus> {
+    const { metadata } = await this.getConfig({ withCache: false });
+    if (!metadata.faces.writeFaces) {
+      this.logger.warn('Skipping rewrite of face XMP sidecars: metadata.faces.writeFaces is disabled');
+      return JobStatus.Skipped;
+    }
+
+    let jobs: JobItem[] = [];
+    const seen = new Set<string>();
+    const stream = this.personRepository.streamAssetIdsWithNamedFaces();
+    for await (const row of stream) {
+      if (seen.has(row.assetId)) {
+        continue;
+      }
+      seen.add(row.assetId);
+      jobs.push({ name: JobName.SidecarWriteFaces, data: { id: row.assetId } });
+      if (jobs.length >= JOBS_ASSET_PAGINATION_SIZE) {
+        await this.jobRepository.queueAll(jobs);
+        jobs = [];
+      }
+    }
+    await this.jobRepository.queueAll(jobs);
+    this.logger.log(`Queued face sidecar rewrite for ${seen.size} assets`);
+    return JobStatus.Success;
+  }
+
   @OnJob({ name: JobName.SidecarWriteFaces, queue: QueueName.Sidecar })
   async handleSidecarWriteFaces({ id }: JobOf<JobName.SidecarWriteFaces>): Promise<JobStatus> {
     const { metadata } = await this.getConfig({ withCache: true });

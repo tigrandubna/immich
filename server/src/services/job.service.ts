@@ -34,6 +34,10 @@ const asJobItem = (dto: JobCreateDto): JobItem => {
       return { name: JobName.DatabaseBackup };
     }
 
+    case ManualJobName.RewriteFaceSidecars: {
+      return { name: JobName.SidecarWriteFacesQueueAll };
+    }
+
     default: {
       throw new BadRequestException('Invalid job name');
     }

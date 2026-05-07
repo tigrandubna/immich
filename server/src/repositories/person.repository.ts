@@ -290,6 +290,18 @@ export class PersonRepository {
       .stream();
   }
 
+  streamAssetIdsWithNamedFaces() {
+    return this.db
+      .selectFrom('asset_face')
+      .innerJoin('person', 'person.id', 'asset_face.personId')
+      .select('asset_face.assetId')
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', 'is', true)
+      .where('person.name', '!=', '')
+      .distinct()
+      .stream();
+  }
+
   @GenerateSql({ params: [DummyValue.UUID] })
   getFaceForFacialRecognitionJob(id: string) {
     return this.db

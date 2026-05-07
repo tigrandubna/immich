@@ -402,6 +402,7 @@ export enum ManualJobName {
   MemoryCleanup = 'memory-cleanup',
   MemoryCreate = 'memory-create',
   BackupDatabase = 'backup-database',
+  RewriteFaceSidecars = 'rewrite-face-sidecars',
 }
 
 export const ManualJobNameSchema = z.enum(ManualJobName).describe('Manual job name').meta({ id: 'ManualJobName' });
@@ -851,6 +852,7 @@ export enum JobName {
   SidecarCheck = 'SidecarCheck',
   SidecarWrite = 'SidecarWrite',
   SidecarWriteFaces = 'SidecarWriteFaces',
+  SidecarWriteFacesQueueAll = 'SidecarWriteFacesQueueAll',
 
   SmartSearchQueueAll = 'SmartSearchQueueAll',
   SmartSearch = 'SmartSearch',

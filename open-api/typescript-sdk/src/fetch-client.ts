@@ -7013,7 +7013,8 @@ export enum ManualJobName {
     UserCleanup = "user-cleanup",
     MemoryCleanup = "memory-cleanup",
     MemoryCreate = "memory-create",
-    BackupDatabase = "backup-database"
+    BackupDatabase = "backup-database",
+    RewriteFaceSidecars = "rewrite-face-sidecars"
 }
 export enum QueueName {
     ThumbnailGeneration = "thumbnailGeneration",

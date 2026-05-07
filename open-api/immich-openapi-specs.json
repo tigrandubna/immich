@@ -18015,6 +18015,7 @@
           "SidecarCheck",
           "SidecarWrite",
           "SidecarWriteFaces",
+          "SidecarWriteFacesQueueAll",
           "SmartSearchQueueAll",
           "SmartSearch",
           "StorageTemplateMigration",
@@ -18397,7 +18398,8 @@
           "user-cleanup",
           "memory-cleanup",
           "memory-create",
-          "backup-database"
+          "backup-database",
+          "rewrite-face-sidecars"
         ],
         "type": "string"
       },

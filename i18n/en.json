@@ -351,6 +351,7 @@
     "storage_template_user_label": "<code>{label}</code> is the user's Storage Label",
     "system_settings": "System Settings",
     "tag_cleanup_job": "Tag cleanup",
+    "rewrite_face_sidecars_job": "Rewrite face XMP sidecars",
     "template_email_available_tags": "You can use the following variables in your template: {tags}",
     "template_email_if_empty": "If the template is empty, the default email will be used.",
     "template_email_invite_album": "Invite Album Template",
