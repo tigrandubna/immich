@@ -506,6 +506,136 @@ export class PersonService extends BaseService {
 
     await this.assetRepository.upsertJobStatus({ assetId: asset.id, facesRecognizedAt: new Date() });
 
+    if (facesToAdd.length > 0 || faceIdsToRemove.length > 0) {
+      await this.jobRepository.queue({ name: JobName.AssetFaceDedup, data: { id } });
+    }
+
+    return JobStatus.Success;
+  }
+
+  @OnJob({ name: JobName.AssetFaceDedupQueueAll, queue: QueueName.BackgroundTask })
+  async handleQueueDedupAssetFaces(): Promise<JobStatus> {
+    let jobs: JobItem[] = [];
+    const stream = this.personRepository.streamAssetIdsWithMultipleFaces();
+    for await (const row of stream) {
+      jobs.push({ name: JobName.AssetFaceDedup, data: { id: row.assetId } });
+      if (jobs.length >= JOBS_ASSET_PAGINATION_SIZE) {
+        await this.jobRepository.queueAll(jobs);
+        jobs = [];
+      }
+    }
+    await this.jobRepository.queueAll(jobs);
+    return JobStatus.Success;
+  }
+
+  @OnJob({ name: JobName.AssetFaceDedup, queue: QueueName.BackgroundTask })
+  async handleDedupAssetFaces({ id }: JobOf<JobName.AssetFaceDedup>): Promise<JobStatus> {
+    return this.deduplicateAssetFaces(id);
+  }
+
+  private async deduplicateAssetFaces(assetId: string, iouThreshold = 0.7): Promise<JobStatus> {
+    const faces = await this.personRepository.getFacesByAssetWithEmbeddings(assetId);
+    if (faces.length < 2) {
+      return JobStatus.Skipped;
+    }
+
+    type FaceRow = (typeof faces)[number];
+    const clusters: FaceRow[][] = [];
+    const visited = new Set<string>();
+    for (const face of faces) {
+      if (visited.has(face.id)) {
+        continue;
+      }
+      const cluster: FaceRow[] = [face];
+      visited.add(face.id);
+      const queue: FaceRow[] = [face];
+      while (queue.length > 0) {
+        const head = queue.shift()!;
+        for (const other of faces) {
+          if (visited.has(other.id)) {
+            continue;
+          }
+          const overlap = this.iou(head, {
+            x1: other.boundingBoxX1,
+            y1: other.boundingBoxY1,
+            x2: other.boundingBoxX2,
+            y2: other.boundingBoxY2,
+          });
+          if (overlap >= iouThreshold) {
+            visited.add(other.id);
+            cluster.push(other);
+            queue.push(other);
+          }
+        }
+      }
+      clusters.push(cluster);
+    }
+
+    const idsToRemove: string[] = [];
+    let mutated = false;
+    for (const cluster of clusters) {
+      if (cluster.length < 2) {
+        continue;
+      }
+      mutated = true;
+      const named = cluster.filter((f) => f.personName && f.personName.length > 0);
+      const unique = new Set(named.map((f) => f.personId));
+
+      if (named.length === 0) {
+        const [keep, ...rest] = cluster;
+        idsToRemove.push(...rest.map((f) => f.id));
+        this.logger.debug(`Dedup ${assetId}: kept ${keep.id} (no names), removed ${rest.length}`);
+      } else if (named.length === 1 || unique.size === 1) {
+        const keep = named[0];
+        const rest = cluster.filter((f) => f.id !== keep.id);
+        idsToRemove.push(...rest.map((f) => f.id));
+        this.logger.debug(`Dedup ${assetId}: kept ${keep.id} (named "${keep.personName}"), removed ${rest.length}`);
+      } else {
+        // Conflicting names — clear all, drop all but one, then re-attach via vector search.
+        const [keep, ...rest] = cluster;
+        const restIds = rest.map((f) => f.id);
+        await this.personRepository.reassignFaces({ faceIds: [keep.id], newPersonId: null as never });
+        idsToRemove.push(...restIds);
+
+        if (keep.embedding) {
+          try {
+            const matches = await this.searchRepository.searchFaces({
+              userIds: [keep.ownerId],
+              embedding: keep.embedding,
+              maxDistance: 0.5,
+              numResults: 1,
+              hasPerson: true,
+              minBirthDate: keep.fileCreatedAt ? new Date(keep.fileCreatedAt) : undefined,
+            });
+            const personId = matches.find((m) => m.personId)?.personId;
+            if (personId) {
+              await this.personRepository.reassignFace(keep.id, personId);
+              this.logger.log(
+                `Dedup ${assetId}: cleared conflicting names, re-attached ${keep.id} to person ${personId} via vector search`,
+              );
+            } else {
+              this.logger.log(
+                `Dedup ${assetId}: cleared conflicting names, kept ${keep.id} unassigned (no vector match)`,
+              );
+            }
+          } catch (error) {
+            this.logger.warn(`Dedup vector search failed for asset ${assetId}: ${error}`);
+          }
+        }
+      }
+    }
+
+    if (idsToRemove.length > 0) {
+      await this.personRepository.refreshFaces([], idsToRemove);
+    }
+
+    if (mutated) {
+      const { metadata } = await this.getConfig({ withCache: true });
+      if (metadata.faces.writeFaces) {
+        await this.jobRepository.queue({ name: JobName.SidecarWriteFaces, data: { id: assetId } });
+      }
+    }
+
     return JobStatus.Success;
   }
 

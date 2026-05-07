@@ -38,6 +38,10 @@ const asJobItem = (dto: JobCreateDto): JobItem => {
       return { name: JobName.SidecarWriteFacesQueueAll };
     }
 
+    case ManualJobName.DeduplicateAssetFaces: {
+      return { name: JobName.AssetFaceDedupQueueAll };
+    }
+
     default: {
       throw new BadRequestException('Invalid job name');
     }

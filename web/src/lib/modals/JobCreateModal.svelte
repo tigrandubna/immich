@@ -17,6 +17,7 @@
     { title: $t('admin.memory_generate_job'), value: ManualJobName.MemoryCreate },
     { title: $t('admin.backup_database'), value: ManualJobName.BackupDatabase },
     { title: $t('admin.rewrite_face_sidecars_job'), value: ManualJobName.RewriteFaceSidecars },
+    { title: $t('admin.deduplicate_asset_faces_job'), value: ManualJobName.DeduplicateAssetFaces },
   ].map(({ value, title }) => ({ id: value, label: title, value }));
 
   let selectedJob: ComboBoxOption | undefined = $state(undefined);

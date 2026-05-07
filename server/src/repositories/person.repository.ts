@@ -302,6 +302,43 @@ export class PersonRepository {
       .stream();
   }
 
+  streamAssetIdsWithMultipleFaces() {
+    return this.db
+      .selectFrom('asset_face')
+      .select('asset_face.assetId')
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', 'is', true)
+      .groupBy('asset_face.assetId')
+      .having((eb) => eb.fn.count('asset_face.id'), '>', 1)
+      .stream();
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID] })
+  async getFacesByAssetWithEmbeddings(assetId: string) {
+    return this.db
+      .selectFrom('asset_face')
+      .innerJoin('asset', 'asset.id', 'asset_face.assetId')
+      .leftJoin('person', 'person.id', 'asset_face.personId')
+      .leftJoin('face_search', 'face_search.faceId', 'asset_face.id')
+      .select([
+        'asset_face.id',
+        'asset_face.assetId',
+        'asset_face.personId',
+        'asset_face.boundingBoxX1',
+        'asset_face.boundingBoxY1',
+        'asset_face.boundingBoxX2',
+        'asset_face.boundingBoxY2',
+        'asset.ownerId as ownerId',
+        'asset.fileCreatedAt as fileCreatedAt',
+        'person.name as personName',
+        'face_search.embedding as embedding',
+      ])
+      .where('asset_face.assetId', '=', assetId)
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', 'is', true)
+      .execute();
+  }
+
   @GenerateSql({ params: [DummyValue.UUID] })
   getFaceForFacialRecognitionJob(id: string) {
     return this.db

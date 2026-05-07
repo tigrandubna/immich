@@ -403,6 +403,7 @@ export enum ManualJobName {
   MemoryCreate = 'memory-create',
   BackupDatabase = 'backup-database',
   RewriteFaceSidecars = 'rewrite-face-sidecars',
+  DeduplicateAssetFaces = 'deduplicate-asset-faces',
 }
 
 export const ManualJobNameSchema = z.enum(ManualJobName).describe('Manual job name').meta({ id: 'ManualJobName' });
@@ -843,6 +844,8 @@ export enum JobName {
   PersonGenerateThumbnail = 'PersonGenerateThumbnail',
   FaceThumbnailQueueAll = 'FaceThumbnailQueueAll',
   FaceGenerateThumbnail = 'FaceGenerateThumbnail',
+  AssetFaceDedupQueueAll = 'AssetFaceDedupQueueAll',
+  AssetFaceDedup = 'AssetFaceDedup',
 
   SessionCleanup = 'SessionCleanup',
 

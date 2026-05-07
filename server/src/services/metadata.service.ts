@@ -1066,6 +1066,10 @@ export class MetadataService extends BaseService {
       await this.jobRepository.queueAll(thumbnailJobs);
     }
 
+    if (facesToAdd.length > 0 || facesToRemove.length > 0) {
+      await this.jobRepository.queue({ name: JobName.AssetFaceDedup, data: { id: asset.id } });
+    }
+
     if (missingWithFaceAsset.length > 0) {
       await this.personRepository.updateAll(missingWithFaceAsset);
     }

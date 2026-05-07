@@ -18009,6 +18009,8 @@
           "PersonGenerateThumbnail",
           "FaceThumbnailQueueAll",
           "FaceGenerateThumbnail",
+          "AssetFaceDedupQueueAll",
+          "AssetFaceDedup",
           "SessionCleanup",
           "SendMail",
           "SidecarQueueAll",
@@ -18399,7 +18401,8 @@
           "memory-cleanup",
           "memory-create",
           "backup-database",
-          "rewrite-face-sidecars"
+          "rewrite-face-sidecars",
+          "deduplicate-asset-faces"
         ],
         "type": "string"
       },
