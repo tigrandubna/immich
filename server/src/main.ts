@@ -26,6 +26,12 @@ class Workers {
   restarting = false;
 
   /**
+   * Per-worker timestamps of recent crashes. Used to break out of an infinite
+   * crash loop instead of restarting forever.
+   */
+  crashHistory: Partial<Record<ImmichWorker, number[]>> = {};
+
+  /**
    * Boot all enabled workers
    */
   async bootstrap() {
@@ -145,12 +151,28 @@ class Workers {
       return;
     }
 
-    // shutdown the entire process
     delete this.workers[name];
 
     if (exitCode !== 0) {
       console.error(`${name} worker exited with code ${exitCode}`);
 
+      // Auto-restart a crashed worker as long as it isn't crashing in a tight loop.
+      // Without this, a transient OOM in the microservices worker_thread takes the
+      // queues offline indefinitely (the api fork keeps running as an orphan, while
+      // BullMQ active locks for the dead worker never expire because no consumer
+      // is left to run the stalled-check).
+      const now = Date.now();
+      const history = (this.crashHistory[name] ?? []).filter((t) => now - t < 60_000);
+      history.push(now);
+      this.crashHistory[name] = history;
+
+      if (history.length <= 3) {
+        console.error(`Restarting ${name} worker (crash ${history.length}/3 within 60s)`);
+        this.startWorker(name);
+        return;
+      }
+
+      console.error(`${name} worker crashed too many times within 60s, giving up`);
       if (this.workers[ImmichWorker.Api] && name !== ImmichWorker.Api) {
         console.error('Killing api process');
         void this.workers[ImmichWorker.Api].kill('SIGTERM');

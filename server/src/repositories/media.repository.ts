@@ -46,8 +46,13 @@ const probe = (input: string, options: string[]): Promise<FfprobeData> =>
 
 const execFile = promisify(execFileCb);
 
-sharp.concurrency(0);
-sharp.cache({ files: 0 });
+// Each sharp pipeline gets a single libvips thread. concurrency(0) means
+// "spawn as many threads as CPU cores per instance" — with 10 parallel
+// thumbnailGeneration + faceThumbnail + smartSearch jobs this creates a
+// thread storm and the worker_thread OOMs the Docker VM. concurrency(1)
+// keeps total libvips threads at ~ N(parallel jobs), bounded memory.
+sharp.concurrency(1);
+sharp.cache({ memory: 0, items: 0, files: 0 });
 
 const pascalCase = (str: string) => _.upperFirst(_.camelCase(str.toLowerCase()));
 
