@@ -485,14 +485,25 @@ export class PersonService extends BaseService {
       await this.personRepository.refreshFaces(facesToAdd, faceIdsToRemove, embeddings);
     }
 
+    // Run dedup synchronously before enqueueing follow-up jobs. Otherwise FacialRecognition
+    // (separate worker) can pick up a face id that the async dedup is about to delete,
+    // producing "Face X not found" warnings.
+    let removedByDedup = new Set<string>();
+    if (facesToAdd.length > 0 || faceIdsToRemove.length > 0) {
+      ({ removedIds: removedByDedup } = await this.deduplicateAssetFaces(id));
+    }
+    const survivingFacesToAdd = facesToAdd.filter((face) => !removedByDedup.has(face.id));
+
     if (faceIdsToRemove.length > 0) {
       this.logger.log(`Removed ${faceIdsToRemove.length} faces below detection threshold in asset ${id}`);
     }
 
-    if (facesToAdd.length > 0) {
-      this.logger.log(`Detected ${facesToAdd.length} new faces in asset ${id}`);
-      const jobs = facesToAdd.map((face) => ({ name: JobName.FacialRecognition, data: { id: face.id } }) as const);
-      const thumbJobs = facesToAdd.map(
+    if (survivingFacesToAdd.length > 0) {
+      this.logger.log(`Detected ${survivingFacesToAdd.length} new faces in asset ${id}`);
+      const jobs = survivingFacesToAdd.map(
+        (face) => ({ name: JobName.FacialRecognition, data: { id: face.id } }) as const,
+      );
+      const thumbJobs = survivingFacesToAdd.map(
         (face) => ({ name: JobName.FaceGenerateThumbnail, data: { id: face.id } }) as const,
       );
       await this.jobRepository.queueAll([
@@ -505,10 +516,6 @@ export class PersonService extends BaseService {
     }
 
     await this.assetRepository.upsertJobStatus({ assetId: asset.id, facesRecognizedAt: new Date() });
-
-    if (facesToAdd.length > 0 || faceIdsToRemove.length > 0) {
-      await this.jobRepository.queue({ name: JobName.AssetFaceDedup, data: { id } });
-    }
 
     return JobStatus.Success;
   }
@@ -530,13 +537,17 @@ export class PersonService extends BaseService {
 
   @OnJob({ name: JobName.AssetFaceDedup, queue: QueueName.BackgroundTask })
   async handleDedupAssetFaces({ id }: JobOf<JobName.AssetFaceDedup>): Promise<JobStatus> {
-    return this.deduplicateAssetFaces(id);
+    const { status } = await this.deduplicateAssetFaces(id);
+    return status;
   }
 
-  private async deduplicateAssetFaces(assetId: string, iouThreshold = 0.7): Promise<JobStatus> {
+  private async deduplicateAssetFaces(
+    assetId: string,
+    iouThreshold = 0.7,
+  ): Promise<{ status: JobStatus; removedIds: Set<string> }> {
     const faces = await this.personRepository.getFacesByAssetWithEmbeddings(assetId);
-    if (faces.length < 2) {
-      return JobStatus.Skipped;
+    if (!faces || faces.length < 2) {
+      return { status: JobStatus.Skipped, removedIds: new Set() };
     }
 
     type FaceRow = (typeof faces)[number] & {
@@ -660,7 +671,7 @@ export class PersonService extends BaseService {
       }
     }
 
-    return JobStatus.Success;
+    return { status: JobStatus.Success, removedIds: new Set(idsToRemove) };
   }
 
   private iou(
