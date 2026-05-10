@@ -40,6 +40,12 @@
 
 11. **Список шеринговых ссылок с именами.** На странице `/shared-links` для Person-ссылок отображается имя человека (DTO дополнен полем `personName`). Каждая карточка имеет стандартные кнопки **Edit / Copy / Delete** — Delete отзывает ссылку.
 
+## Стабильность очередей
+
+12. **Дедуп лиц синхронно в `handleDetectFaces`.** Раньше дедуп ставился отдельным `AssetFaceDedup` job в `BackgroundTask` и работал параллельно с `FacialRecognition`. На каждой загруженной фотографии возникала race: ML-распознавание подбирало `faceId`, который дедуп удалял в ту же секунду, и в логах сыпалось `Face X not found` + `PostgresError: person_faceAssetId_fkey`. Теперь в `handleDetectFaces` после `refreshFaces` дедуп вызывается синхронно и в `FacialRecognition` / `FaceGenerateThumbnail` уходят только выжившие id. Ручной job `AssetFaceDedup` остался для batch-прогона по существующим ассетам.
+
+13. **PSD больше не обрабатываются.** Sharp/libvips зависает на больших `.psd` (например, 647 MB), забивает `UV_THREADPOOL`, OOM-kill убивает дочерний процесс — но основной Node не получает SIGCHLD и держит worker-слот вечно. Десять параллельных слотов `thumbnailGeneration` залипают целиком, очереди встают. `.psd` убран из `mimeTypes.raw` (новые импорты блокируются library scanner и upload endpoint), а `handleGenerateThumbnails` дополнительно делает early-skip для `AssetType.Image` ассетов с расширением вне `mimeTypes.image` — это покрывает уже импортированные PSD без необходимости их удалять. Если в будущем подобное проявится на другом формате — добавлять расширение туда же.
+
 ## Запуск
 
 Внешние папки с фотографиями подключаются как bind-volumes сервиса `immich-server` в [`docker/docker-compose.dev.yml`](docker/docker-compose.dev.yml) — в файле уже есть закомментированный шаблон. Подробная инструкция по подключению папок и созданию External Library в UI: **[MOUNT_FOLDERS.md](MOUNT_FOLDERS.md)**.
