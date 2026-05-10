@@ -289,8 +289,8 @@ export const defaults = Object.freeze<SystemConfig>({
   },
   metadata: {
     faces: {
-      import: false,
-      readFromSubfolder: false,
+      import: true,
+      readFromSubfolder: true,
       writeFaces: false,
     },
   },
