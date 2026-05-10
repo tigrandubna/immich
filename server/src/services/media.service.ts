@@ -221,6 +221,15 @@ export class MediaService extends BaseService {
       return JobStatus.Skipped;
     }
 
+    // Skip assets whose extension is no longer in the supported set (e.g. PSD removed
+    // because Sharp/libvips can hang or OOM on them and stall the worker pool).
+    if (asset.type === AssetType.Image && !mimeTypes.isImage(asset.originalFileName)) {
+      this.logger.warn(
+        `Thumbnail generation skipped for asset ${id} (${asset.originalPath}): extension is no longer supported`,
+      );
+      return JobStatus.Skipped;
+    }
+
     let generated: Awaited<ReturnType<MediaService['generateImageThumbnails']>>;
     if (asset.type === AssetType.Video || asset.originalFileName.toLowerCase().endsWith('.gif')) {
       this.logger.verbose(`Thumbnail generation for video ${id} ${asset.originalPath}`);

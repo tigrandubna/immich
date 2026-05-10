@@ -23,7 +23,6 @@ const raw = {
   '.orf': ['image/orf', 'image/x-olympus-orf'],
   '.ori': ['image/ori', 'image/x-olympus-ori'],
   '.pef': ['image/pef', 'image/x-pentax-pef'],
-  '.psd': ['image/psd', 'image/vnd.adobe.photoshop'],
   '.raf': ['image/raf', 'image/x-fuji-raf'],
   '.raw': ['image/raw', 'image/x-panasonic-raw'],
   '.rw2': ['image/rw2', 'image/x-panasonic-rw2'],

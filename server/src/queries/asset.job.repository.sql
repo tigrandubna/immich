@@ -147,7 +147,6 @@ where
           '%.orf',
           '%.ori',
           '%.pef',
-          '%.psd',
           '%.raf',
           '%.raw',
           '%.rw2',
