@@ -120,6 +120,97 @@
     await goto(url.pathname + url.search, { replaceState: true, keepFocus: true, noScroll: true });
   };
 
+  // Scroll-memory across page reload (F5 / Cmd+R). Browser-level scroll
+  // restoration doesn't help here because both modes scroll an inner element,
+  // not window. We snapshot scrollTop into sessionStorage on `beforeunload`
+  // (per person + mode) and replay it after the contents are tall enough.
+  const scrollStorageKey = $derived(`person-scroll:${person.id}`);
+
+  $effect(() => {
+    const handler = () => {
+      if (isAssetViewerOpen) {
+        return;
+      }
+      const top = showFaceThumbnails
+        ? (faceGridContainer?.scrollTop ?? 0)
+        : (timelineManager?.scrollTop ?? 0);
+      if (top > 0) {
+        sessionStorage.setItem(
+          scrollStorageKey,
+          JSON.stringify({ mode: showFaceThumbnails ? 'faces' : 'timeline', top }),
+        );
+      } else {
+        sessionStorage.removeItem(scrollStorageKey);
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  });
+
+  // Restore for face mode: faceList is one fetch, so as soon as the grid is
+  // mounted and the data is in we can scroll.
+  $effect(() => {
+    if (!showFaceThumbnails || isAssetViewerOpen || !faceGridContainer || faceList.length === 0) {
+      return;
+    }
+    const raw = sessionStorage.getItem(scrollStorageKey);
+    if (!raw) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw) as { mode?: string; top?: number };
+      if (parsed.mode === 'faces' && typeof parsed.top === 'number') {
+        faceGridContainer.scrollTo({ top: parsed.top, behavior: 'instant' });
+        sessionStorage.removeItem(scrollStorageKey);
+      }
+    } catch {
+      sessionStorage.removeItem(scrollStorageKey);
+    }
+  });
+
+  // Restore for timeline mode: TimelineManager grows totalViewerHeight as
+  // months load. Retry on RAF until the virtual list is at least as tall as
+  // the saved offset, or we give up after ~1 second so we don't spin forever
+  // on a now-much-shorter person feed.
+  $effect(() => {
+    if (showFaceThumbnails || isAssetViewerOpen || !timelineManager) {
+      return;
+    }
+    const raw = sessionStorage.getItem(scrollStorageKey);
+    if (!raw) {
+      return;
+    }
+    let cancelled = false;
+    let attempts = 0;
+    let parsed: { mode?: string; top?: number };
+    try {
+      parsed = JSON.parse(raw) as { mode?: string; top?: number };
+    } catch {
+      sessionStorage.removeItem(scrollStorageKey);
+      return;
+    }
+    if (parsed.mode !== 'timeline' || typeof parsed.top !== 'number') {
+      return;
+    }
+    const target = parsed.top;
+    const tryRestore = () => {
+      if (cancelled || !timelineManager) {
+        return;
+      }
+      const ready = timelineManager.totalViewerHeight >= target + timelineManager.viewportHeight;
+      if (ready || attempts++ > 60) {
+        timelineManager.scrollTo(target);
+        sessionStorage.removeItem(scrollStorageKey);
+        return;
+      }
+      requestAnimationFrame(tryRestore);
+    };
+    requestAnimationFrame(tryRestore);
+    return () => {
+      cancelled = true;
+    };
+  });
+
   // PageDown / PageUp / Home / End on the face grid. Without this the keys do
   // nothing — the grid container has no focus and the page body isn't scrollable.
   $effect(() => {
