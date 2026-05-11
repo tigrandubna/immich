@@ -176,5 +176,41 @@
         </a>
       {/each}
     </div>
+
+    {#if unassignedFaces.length > 0}
+      <!--
+        Recognised faces that aren't currently attached to any person — either
+        never had one, or were just detached via the X button on a person tile.
+        Render them as their own grid so the face doesn't visually disappear
+        from the asset after unassignment.
+      -->
+      <div
+        class="mt-4 grid {unassignedFaces.length <= 6 ? 'grid-cols-3 gap-3' : 'grid-cols-4 gap-2'}"
+      >
+        {#each unassignedFaces as face (face.id)}
+          {@const isHighlighted = assetViewerManager.highlightedFaces.some((b) => b.id === face.id)}
+          <button
+            type="button"
+            class="group flex flex-col items-stretch text-left outline-none"
+            title={$t('no_name')}
+            onclick={() => assetViewerManager.openEditFacesPanel()}
+            onfocus={() => assetViewerManager.setHighlightedFaces([face])}
+            onblur={() => assetViewerManager.clearHighlightedFaces()}
+            onpointerenter={() => assetViewerManager.setHighlightedFaces([face])}
+            onpointerleave={() => assetViewerManager.clearHighlightedFaces()}
+          >
+            <img
+              src={`/api/faces/${face.id}/thumbnail?v=2`}
+              alt={$t('no_name')}
+              loading="lazy"
+              class="aspect-square w-full rounded-xl bg-gray-200 object-cover shadow dark:bg-gray-800 {isHighlighted
+                ? 'outline outline-2 outline-offset-2 outline-immich-primary dark:outline-immich-dark-primary'
+                : ''}"
+            />
+            <p class="mt-1 truncate text-sm font-light text-gray-500 dark:text-gray-400">{$t('no_name')}</p>
+          </button>
+        {/each}
+      </div>
+    {/if}
   </section>
 {/if}

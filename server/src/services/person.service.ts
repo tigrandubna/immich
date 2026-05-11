@@ -1029,7 +1029,10 @@ export class PersonService extends BaseService {
   /**
    * Remove the person assignment from a face. The face row stays on the asset
    * (bounding box, embedding, sidecar entry), only personId is cleared so the
-   * face is no longer attributed to anyone.
+   * face is no longer attributed to anyone. Then re-runs facial recognition
+   * for this face so it has a chance to rejoin an existing unassigned cluster
+   * or auto-create a fresh person (same code path that handles a freshly
+   * detected face).
    */
   async unassignFace(auth: AuthDto, id: string): Promise<void> {
     await this.requireAccess({ auth, permission: Permission.FaceUpdate, ids: [id] });
@@ -1050,5 +1053,10 @@ export class PersonService extends BaseService {
     if (face.assetId) {
       await this.queueFaceSidecarWriteIfEnabled([face.assetId]);
     }
+
+    // Give the face a chance to re-cluster: handleRecognizeFaces will look up
+    // similar embeddings and either attach to an existing person or create one
+    // when enough matches exist. If no cluster forms, the face stays unassigned.
+    await this.jobRepository.queue({ name: JobName.FacialRecognition, data: { id, deferred: false } });
   }
 }
