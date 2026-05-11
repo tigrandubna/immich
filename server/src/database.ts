@@ -271,6 +271,7 @@ export type AssetFace = {
   imageHeight: number;
   imageWidth: number;
   personId: string | null;
+  excludedPersonId: string | null;
   sourceType: SourceType;
   person?: ShallowDehydrateObject<Person> | null;
   updatedAt: Date;
