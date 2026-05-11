@@ -532,18 +532,29 @@ export class MetadataService extends BaseService {
     const named = faces.filter((f) => f.person?.name && f.personId);
 
     const target = await this.resolveSidecarTarget(asset, metadata.faces.readFromSubfolder);
+    const sidecarFile = asset.files?.find((file) => file.type === AssetFileType.Sidecar);
 
-    if (named.length === 0) {
+    // If there are no named faces AND no sidecar already exists, there is
+    // genuinely nothing to write — don't create an empty file just to record
+    // an empty region list.
+    if (named.length === 0 && !sidecarFile) {
       return JobStatus.Skipped;
     }
 
-    const imageWidth = named[0].imageWidth || 0;
-    const imageHeight = named[0].imageHeight || 0;
+    // Use any face for AppliedToDimensions when none are named (cleanup mode);
+    // those dimensions describe the asset, not the region content.
+    const dimensionSource = named[0] ?? faces[0];
+    const imageWidth = dimensionSource?.imageWidth || 0;
+    const imageHeight = dimensionSource?.imageHeight || 0;
     if (!imageWidth || !imageHeight) {
       this.logger.warn(`Cannot write face regions for ${asset.originalPath} — missing image dimensions`);
       return JobStatus.Skipped;
     }
 
+    // Pass the named faces (possibly an empty list). writeFaceRegions calls
+    // exiftool with `RegionName^` and friends as plain arrays, which replaces
+    // the existing region list outright — an empty list therefore wipes any
+    // stale entries left from before a face was unassigned.
     await this.metadataRepository.writeFaceRegions(target, {
       imageWidth,
       imageHeight,
@@ -557,7 +568,6 @@ export class MetadataService extends BaseService {
     });
 
     // Persist the sidecar reference if this is a newly-created file.
-    const sidecarFile = asset.files?.find((file) => file.type === AssetFileType.Sidecar);
     if (!sidecarFile || sidecarFile.path !== target) {
       await this.assetRepository.upsertFile({ assetId: id, type: AssetFileType.Sidecar, path: target });
     }
