@@ -24,11 +24,7 @@
   // Detach all faces of this person from the current asset. The faces stay on
   // the photo (bounding box, embedding) but are no longer linked to anyone, so
   // the person tile disappears from this asset's people grid.
-  const handleRemovePersonFromAsset = async (
-    event: MouseEvent,
-    faces: ReadonlyArray<{ id: string }>,
-    name: string,
-  ) => {
+  const handleRemovePersonFromAsset = async (event: MouseEvent, faces: ReadonlyArray<{ id: string }>) => {
     event.preventDefault();
     event.stopPropagation();
     try {
@@ -43,7 +39,7 @@
       );
       await onRefresh?.();
     } catch (error) {
-      handleError(error, $t('errors.unable_to_save_name'));
+      handleError(error, $t('errors.cant_apply_changes'));
     }
   };
 
@@ -154,7 +150,7 @@
               class="absolute top-1 right-1 hidden h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/30 opacity-0 transition-opacity hover:bg-black/50 focus:bg-black/50 focus:opacity-100 focus:outline-none group-hover:flex group-hover:opacity-100"
               aria-label={$t('remove')}
               title={$t('remove')}
-              onclick={(event) => handleRemovePersonFromAsset(event, person.faces, person.name)}
+              onclick={(event) => handleRemovePersonFromAsset(event, person.faces)}
             >
               <!--
                 Two pairs of <line>s: the first pair draws a wider black outline,
