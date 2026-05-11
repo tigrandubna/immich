@@ -79,7 +79,14 @@
 
   let viewMode: PersonPageViewMode = $state(PersonPageViewMode.VIEW_ASSETS);
   let isEditingName = $state(false);
-  let showFaceThumbnails = $state(false);
+  // Driven by ?view=faces in URL so the toggle survives back-navigation from
+  // the asset viewer and browser refresh; locally-only state used to reset.
+  let showFaceThumbnails = $derived($page.url.searchParams.get(QueryParameter.VIEW) === 'faces');
+  // True while the nested asset viewer is open (URL has /photos/<assetId>).
+  // We keep the face-grid mounted but visually hide it so its scroll position
+  // is preserved when the viewer closes.
+  let isAssetViewerOpen = $derived(!!$page.params.assetId);
+  let faceGridContainer = $state<HTMLDivElement>();
   let faceList = $state<Array<{ id: string; assetId: string }>>([]);
   let faceListLoading = $state(false);
 
@@ -101,6 +108,60 @@
     if (showFaceThumbnails && faceList.length === 0 && !faceListLoading) {
       void loadFaceList();
     }
+  });
+
+  const toggleFaceThumbnails = async () => {
+    const url = new URL($page.url);
+    if (showFaceThumbnails) {
+      url.searchParams.delete(QueryParameter.VIEW);
+    } else {
+      url.searchParams.set(QueryParameter.VIEW, 'faces');
+    }
+    await goto(url.pathname + url.search, { replaceState: true, keepFocus: true, noScroll: true });
+  };
+
+  // PageDown / PageUp / Home / End on the face grid. Without this the keys do
+  // nothing — the grid container has no focus and the page body isn't scrollable.
+  $effect(() => {
+    if (!showFaceThumbnails || isAssetViewerOpen) {
+      return;
+    }
+    const handler = (event: KeyboardEvent) => {
+      const container = faceGridContainer;
+      if (!container) {
+        return;
+      }
+      // Don't hijack keys from text inputs, contenteditable, etc.
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      const page = container.clientHeight * 0.9;
+      switch (event.key) {
+        case 'PageDown': {
+          container.scrollBy({ top: page, behavior: 'smooth' });
+          event.preventDefault();
+          break;
+        }
+        case 'PageUp': {
+          container.scrollBy({ top: -page, behavior: 'smooth' });
+          event.preventDefault();
+          break;
+        }
+        case 'Home': {
+          container.scrollTo({ top: 0, behavior: 'smooth' });
+          event.preventDefault();
+          break;
+        }
+        case 'End': {
+          container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+          event.preventDefault();
+          break;
+        }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   });
   let previousRoute = $state<string>(Route.explore());
   let personMerge1: PersonResponseDto | undefined = $state();
@@ -400,8 +461,9 @@
 >
   {#key person.id}
     <div
+      bind:this={faceGridContainer}
       class="immich-scrollbar h-full overflow-y-auto px-4 pt-16 pb-8 sm:px-6"
-      class:hidden={!showFaceThumbnails}
+      class:hidden={!showFaceThumbnails || isAssetViewerOpen}
     >
       {#if faceListLoading && faceList.length === 0}
         <div class="flex justify-center py-10"><LoadingSpinner /></div>
@@ -411,7 +473,7 @@
         <div class="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11">
           {#each faceList as face (face.id)}
             <a
-              href={Route.viewAsset({ id: face.assetId })}
+              href={`/people/${person.id}/photos/${face.assetId}?${QueryParameter.VIEW}=faces`}
               class="block aspect-square overflow-hidden rounded bg-gray-200 dark:bg-gray-800"
               title={person.name}
             >
@@ -433,7 +495,7 @@
         </div>
       {/if}
     </div>
-    <div class="h-full" class:hidden={showFaceThumbnails}>
+    <div class="h-full" class:hidden={showFaceThumbnails && !isAssetViewerOpen}>
     <Timeline
       enableRouting={true}
       {person}
@@ -598,7 +660,7 @@
             variant="ghost"
             aria-label={showFaceThumbnails ? $t('show_full_thumbnails') : $t('show_face_thumbnails')}
             icon={showFaceThumbnails ? mdiImageMultiple : mdiFaceMan}
-            onclick={() => (showFaceThumbnails = !showFaceThumbnails)}
+            onclick={toggleFaceThumbnails}
           />
           <ContextMenuButton
             items={[
