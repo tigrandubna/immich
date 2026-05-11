@@ -71,6 +71,15 @@ const withPerson = (eb: ExpressionBuilder<DB, 'asset_face'>) => {
   ).as('person');
 };
 
+const withExcludedPerson = (eb: ExpressionBuilder<DB, 'asset_face'>) => {
+  return jsonObjectFrom(
+    eb
+      .selectFrom('person')
+      .select(['person.id', 'person.name'])
+      .whereRef('person.id', '=', 'asset_face.excludedPersonId'),
+  ).as('excludedPerson');
+};
+
 const withFaceSearch = (eb: ExpressionBuilder<DB, 'asset_face'>) => {
   return jsonObjectFrom(
     eb.selectFrom('face_search').selectAll('face_search').whereRef('face_search.faceId', '=', 'asset_face.id'),
@@ -232,6 +241,7 @@ export class PersonRepository {
       .selectFrom('asset_face')
       .selectAll('asset_face')
       .select(withPerson)
+      .select(withExcludedPerson)
       .where('asset_face.assetId', '=', assetId)
       .where('asset_face.deletedAt', 'is', null)
       .$if(isVisible !== undefined, (qb) => qb.where('asset_face.isVisible', '=', isVisible!))
@@ -305,6 +315,32 @@ export class PersonRepository {
       .where('asset_face.deletedAt', 'is', null)
       .where('asset_face.isVisible', 'is', true)
       .where('person.name', '!=', '')
+      .distinct()
+      .stream();
+  }
+
+  /**
+   * Assets that have at least one face which is either:
+   *   - attached to a named person (round-trip the name to XMP), or
+   *   - manually detached with excludedPersonId set (round-trip the
+   *     "do-not-reattach" marker to XMP).
+   * Used by the "Rewrite face XMP sidecars" manual job so that previously
+   * unassigned-with-exclusion faces also get persisted on disk.
+   */
+  streamAssetIdsWithFaceRegionsToWrite() {
+    return this.db
+      .selectFrom('asset_face as af')
+      .leftJoin('person as p', 'p.id', 'af.personId')
+      .leftJoin('person as ep', 'ep.id', 'af.excludedPersonId')
+      .select('af.assetId')
+      .where('af.deletedAt', 'is', null)
+      .where('af.isVisible', 'is', true)
+      .where((eb) =>
+        eb.or([
+          eb.and([eb('af.personId', 'is not', null), eb('p.name', '!=', '')]),
+          eb.and([eb('af.excludedPersonId', 'is not', null), eb('ep.name', 'is not', null), eb('ep.name', '!=', '')]),
+        ]),
+      )
       .distinct()
       .stream();
   }

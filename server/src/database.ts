@@ -274,6 +274,7 @@ export type AssetFace = {
   excludedPersonId: string | null;
   sourceType: SourceType;
   person?: ShallowDehydrateObject<Person> | null;
+  excludedPerson?: { id: string; name: string } | null;
   updatedAt: Date;
   updateId: string;
   isVisible: boolean;

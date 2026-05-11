@@ -42,6 +42,14 @@ import { Tasks } from 'src/utils/tasks';
 const POSTGRES_INT_MAX = 2_147_483_647;
 const POSTGRES_INT_MIN = -2_147_483_648;
 
+// MWG-Region <Name> values starting with this prefix are not actual person
+// names; they record that the user manually detached this face from the named
+// person and that facial recognition should not auto-reattach it. The format
+// is round-tripped by handleSidecarWriteFaces (writes) and handleMetadataFaces
+// (reads). The colon is a regular Unicode character inside the XMP string,
+// it's not interpreted by exiftool.
+const EXCLUDED_REGION_PREFIX = 'immich:excluded:';
+
 /** look for a date from these tags (in order) */
 const EXIF_DATE_TAGS: Array<keyof ImmichTags> = [
   'SubSecDateTimeOriginal',
@@ -499,7 +507,10 @@ export class MetadataService extends BaseService {
 
     let jobs: JobItem[] = [];
     const seen = new Set<string>();
-    const stream = this.personRepository.streamAssetIdsWithNamedFaces();
+    // Pull assets that need an XMP rewrite — both classic named-face owners
+    // and ones with detached-face exclusion markers that haven't been
+    // persisted to disk yet.
+    const stream = this.personRepository.streamAssetIdsWithFaceRegionsToWrite();
     for await (const row of stream) {
       if (seen.has(row.assetId)) {
         continue;
@@ -529,21 +540,53 @@ export class MetadataService extends BaseService {
     }
 
     const faces = await this.personRepository.getFaces(id);
-    const named = faces.filter((f) => f.person?.name && f.personId);
+    // Two kinds of "exportable" face entries:
+    //  - regions with a real person name (the normal case)
+    //  - regions that were explicitly detached from a person (excludedPersonId
+    //    is set). We round-trip those through the sidecar by storing them under
+    //    a synthetic name `immich:excluded:<previousName>` so a future re-import
+    //    can recreate the exclusion and avoid auto-reattaching the face.
+    type Entry = {
+      name: string;
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+    };
+    const entries: Entry[] = [];
+    for (const f of faces) {
+      if (f.person?.name && f.personId) {
+        entries.push({
+          name: f.person.name,
+          x1: f.boundingBoxX1,
+          y1: f.boundingBoxY1,
+          x2: f.boundingBoxX2,
+          y2: f.boundingBoxY2,
+        });
+      } else if (f.excludedPerson?.name && !f.personId) {
+        entries.push({
+          name: `${EXCLUDED_REGION_PREFIX}${f.excludedPerson.name}`,
+          x1: f.boundingBoxX1,
+          y1: f.boundingBoxY1,
+          x2: f.boundingBoxX2,
+          y2: f.boundingBoxY2,
+        });
+      }
+    }
 
     const target = await this.resolveSidecarTarget(asset, metadata.faces.readFromSubfolder);
     const sidecarFile = asset.files?.find((file) => file.type === AssetFileType.Sidecar);
 
-    // If there are no named faces AND no sidecar already exists, there is
-    // genuinely nothing to write — don't create an empty file just to record
+    // If there are no exportable entries AND no sidecar already exists, there
+    // is genuinely nothing to write — don't create an empty file just to record
     // an empty region list.
-    if (named.length === 0 && !sidecarFile) {
+    if (entries.length === 0 && !sidecarFile) {
       return JobStatus.Skipped;
     }
 
-    // Use any face for AppliedToDimensions when none are named (cleanup mode);
-    // those dimensions describe the asset, not the region content.
-    const dimensionSource = named[0] ?? faces[0];
+    // Use any face for AppliedToDimensions when none are exportable (cleanup
+    // mode); those dimensions describe the asset, not the region content.
+    const dimensionSource = faces[0];
     const imageWidth = dimensionSource?.imageWidth || 0;
     const imageHeight = dimensionSource?.imageHeight || 0;
     if (!imageWidth || !imageHeight) {
@@ -551,20 +594,14 @@ export class MetadataService extends BaseService {
       return JobStatus.Skipped;
     }
 
-    // Pass the named faces (possibly an empty list). writeFaceRegions calls
+    // Pass the entries (possibly an empty list). writeFaceRegions calls
     // exiftool with `RegionName^` and friends as plain arrays, which replaces
     // the existing region list outright — an empty list therefore wipes any
     // stale entries left from before a face was unassigned.
     await this.metadataRepository.writeFaceRegions(target, {
       imageWidth,
       imageHeight,
-      faces: named.map((f) => ({
-        name: f.person!.name,
-        x1: f.boundingBoxX1,
-        y1: f.boundingBoxY1,
-        x2: f.boundingBoxX2,
-        y2: f.boundingBoxY2,
-      })),
+      faces: entries,
     });
 
     // Persist the sidecar reference if this is a newly-created file.
@@ -1029,12 +1066,23 @@ export class MetadataService extends BaseService {
         continue;
       }
 
-      const loweredName = region.Name.toLowerCase();
-      const personId = existingNameMap.get(loweredName) || this.cryptoRepository.randomUUID();
+      // Recognise the round-tripped "this face was detached from X" marker
+      // written by handleSidecarWriteFaces. Such regions become faces with
+      // personId = null and excludedPersonId pointing at the named person,
+      // so facial recognition won't auto-reattach the face to them.
+      const isExclusion = region.Name.startsWith(EXCLUDED_REGION_PREFIX);
+      const effectiveName = isExclusion ? region.Name.slice(EXCLUDED_REGION_PREFIX.length) : region.Name;
+      if (!effectiveName) {
+        continue;
+      }
+
+      const loweredName = effectiveName.toLowerCase();
+      const targetPersonId = existingNameMap.get(loweredName) || this.cryptoRepository.randomUUID();
 
       const face = {
         id: this.cryptoRepository.randomUUID(),
-        personId,
+        personId: isExclusion ? null : targetPersonId,
+        excludedPersonId: isExclusion ? targetPersonId : null,
         assetId: asset.id,
         imageWidth,
         imageHeight,
@@ -1047,8 +1095,13 @@ export class MetadataService extends BaseService {
 
       facesToAdd.push(face);
       if (!existingNameMap.has(loweredName)) {
-        missing.push({ id: personId, ownerId: asset.ownerId, name: region.Name });
-        missingWithFaceAsset.push({ id: personId, ownerId: asset.ownerId, faceAssetId: face.id });
+        missing.push({ id: targetPersonId, ownerId: asset.ownerId, name: effectiveName });
+        // Exclusion markers shouldn't promote the new person's feature photo
+        // to a face that isn't even attached to that person — only do this on
+        // real assignments.
+        if (!isExclusion) {
+          missingWithFaceAsset.push({ id: targetPersonId, ownerId: asset.ownerId, faceAssetId: face.id });
+        }
       }
     }
 
