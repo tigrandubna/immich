@@ -85,7 +85,12 @@ export class PersonRepository {
   async reassignFaces({ oldPersonId, faceIds, newPersonId }: UpdateFacesData): Promise<number> {
     const result = await this.db
       .updateTable('asset_face')
-      .set({ personId: newPersonId })
+      // Any reassignment to a non-null person clears the unassign-exclusion;
+      // the user has explicitly attached this face to someone, so the prior
+      // "do not auto-reattach" hint is dropped. For null reassignment (bulk
+      // detach, currently only used by dedup) we don't track which person it
+      // was — the per-face unassignFace path uses reassignFace() instead.
+      .set({ personId: newPersonId, excludedPersonId: null })
       .$if(!!oldPersonId, (qb) => qb.where('asset_face.personId', '=', oldPersonId!))
       .$if(!!faceIds, (qb) => qb.where('asset_face.id', 'in', faceIds!))
       .executeTakeFirst();
@@ -347,7 +352,13 @@ export class PersonRepository {
   getFaceForFacialRecognitionJob(id: string) {
     return this.db
       .selectFrom('asset_face')
-      .select(['asset_face.id', 'asset_face.personId', 'asset_face.sourceType', 'asset_face.assetId'])
+      .select([
+        'asset_face.id',
+        'asset_face.personId',
+        'asset_face.sourceType',
+        'asset_face.assetId',
+        'asset_face.excludedPersonId',
+      ])
       .select((eb) =>
         jsonObjectFrom(
           eb
@@ -387,11 +398,29 @@ export class PersonRepository {
       .executeTakeFirst();
   }
 
+  /**
+   * Update a face's person assignment.
+   *
+   * - When `newPersonId` is non-null (regular reassignment), `excludedPersonId`
+   *   is also cleared so that any prior "do not auto-reattach to X" hint is
+   *   dropped — the user is explicitly reassigning, so the exclusion no longer
+   *   applies.
+   * - When `newPersonId` is null AND `excludePersonId` is provided, the face
+   *   is being detached and the previous person id is recorded as excluded so
+   *   facial recognition won't immediately put the face back where it was.
+   */
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
-  async reassignFace(assetFaceId: string, newPersonId: string | null): Promise<number> {
+  async reassignFace(
+    assetFaceId: string,
+    newPersonId: string | null,
+    excludePersonId: string | null = null,
+  ): Promise<number> {
     const result = await this.db
       .updateTable('asset_face')
-      .set({ personId: newPersonId })
+      .set({
+        personId: newPersonId,
+        excludedPersonId: newPersonId === null ? excludePersonId : null,
+      })
       .where('asset_face.id', '=', assetFaceId)
       .executeTakeFirst();
 

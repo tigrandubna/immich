@@ -140,6 +140,10 @@ export interface FaceEmbeddingSearch extends SearchEmbeddingOptions {
   numResults: number;
   maxDistance: number;
   minBirthDate?: Date | null;
+  // When set, skip candidate faces already assigned to any of these person ids.
+  // Used by FacialRecognition after a manual unassign so the face can't be
+  // reattached to the same person via embedding similarity.
+  excludePersonIds?: string[];
 }
 
 export interface FaceSearchResult {
@@ -312,10 +316,19 @@ export class SearchRepository {
       },
     ],
   })
-  searchFaces({ userIds, embedding, numResults, maxDistance, hasPerson, minBirthDate }: FaceEmbeddingSearch) {
+  searchFaces({
+    userIds,
+    embedding,
+    numResults,
+    maxDistance,
+    hasPerson,
+    minBirthDate,
+    excludePersonIds,
+  }: FaceEmbeddingSearch) {
     if (!isValidInteger(numResults, { min: 1, max: 1000 })) {
       throw new Error(`Invalid value for 'numResults': ${numResults}`);
     }
+    const hasExcludes = !!excludePersonIds && excludePersonIds.length > 0;
 
     return this.db.transaction().execute(async (trx) => {
       await sql`set local vchordrq.probes = ${sql.lit(probes[VectorIndex.Face])}`.execute(trx);
@@ -334,6 +347,7 @@ export class SearchRepository {
             .where('asset.ownerId', '=', anyUuid(userIds))
             .where('asset.deletedAt', 'is', null)
             .$if(!!hasPerson, (qb) => qb.where('asset_face.personId', 'is not', null))
+            .$if(hasExcludes, (qb) => qb.where('asset_face.personId', 'not in', excludePersonIds!))
             .$if(!!minBirthDate, (qb) =>
               qb.where((eb) =>
                 eb.or([eb('person.birthDate', 'is', null), eb('person.birthDate', '<=', minBirthDate!)]),

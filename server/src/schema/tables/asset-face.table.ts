@@ -54,6 +54,17 @@ export class AssetFaceTable {
   })
   personId!: string | null;
 
+  // Records the person the user has manually disassociated this face from, so
+  // facial recognition won't re-attach it via embedding similarity. Cleared on
+  // any subsequent personId reassignment.
+  @ForeignKeyColumn(() => PersonTable, {
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE',
+    nullable: true,
+    index: false,
+  })
+  excludedPersonId!: string | null;
+
   @Column({ default: 0, type: 'integer' })
   imageWidth!: Generated<number>;
 

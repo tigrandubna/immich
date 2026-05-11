@@ -790,12 +790,17 @@ export class PersonService extends BaseService {
       return JobStatus.Skipped;
     }
 
+    // Skip the person this face was previously detached from (set by unassignFace)
+    // so the embedding-similarity search can't immediately reattach it back.
+    const excludePersonIds = face.excludedPersonId ? [face.excludedPersonId] : undefined;
+
     const matches = await this.searchRepository.searchFaces({
       userIds: [face.asset.ownerId],
       embedding: face.faceSearch.embedding,
       maxDistance: machineLearning.facialRecognition.maxDistance,
       numResults: machineLearning.facialRecognition.minFaces,
       minBirthDate: new Date(face.asset.fileCreatedAt),
+      excludePersonIds,
     });
 
     // `matches` also includes the face itself
@@ -824,6 +829,7 @@ export class PersonService extends BaseService {
         numResults: 1,
         hasPerson: true,
         minBirthDate: new Date(face.asset.fileCreatedAt),
+        excludePersonIds,
       });
 
       if (matchWithPerson.length > 0) {
@@ -1043,7 +1049,7 @@ export class PersonService extends BaseService {
     }
     const previousPerson = face.person;
 
-    await this.personRepository.reassignFace(id, null);
+    await this.personRepository.reassignFace(id, null, previousPerson.id);
 
     // If this face was the person's feature photo, regenerate it from another face.
     if (previousPerson.faceAssetId === id) {
