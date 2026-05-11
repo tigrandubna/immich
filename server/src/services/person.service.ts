@@ -569,7 +569,14 @@ export class PersonService extends BaseService {
       };
     });
 
-    const iouNormalized = (a: FaceRow, b: FaceRow): number => {
+    // Two boxes are considered to belong to the same face if either:
+    //  - IoU is above iouThreshold (default 0.7), or
+    //  - the smaller box is mostly contained inside the larger one (IoMin >= ioMinThreshold).
+    // The IoMin branch handles the common ML-vs-XMP mismatch: ML detectors emit a tight
+    // forehead-to-chin bbox while MWG-Region XMP regions cover the whole head (hair, neck),
+    // so the smaller can sit fully inside the larger and still produce IoU ~0.4. Centres
+    // of two distinct faces in a group photo do not contain each other, so this stays safe.
+    const overlap = (a: FaceRow, b: FaceRow): { iou: number; iomin: number } => {
       const x1 = Math.max(a._nx1, b._nx1);
       const y1 = Math.max(a._ny1, b._ny1);
       const x2 = Math.min(a._nx2, b._nx2);
@@ -578,8 +585,13 @@ export class PersonService extends BaseService {
       const areaA = Math.max(0, a._nx2 - a._nx1) * Math.max(0, a._ny2 - a._ny1);
       const areaB = Math.max(0, b._nx2 - b._nx1) * Math.max(0, b._ny2 - b._ny1);
       const union = areaA + areaB - intersection;
-      return union > 0 ? intersection / union : 0;
+      const minArea = Math.min(areaA, areaB);
+      return {
+        iou: union > 0 ? intersection / union : 0,
+        iomin: minArea > 0 ? intersection / minArea : 0,
+      };
     };
+    const ioMinThreshold = 0.85;
 
     const clusters: FaceRow[][] = [];
     const visited = new Set<string>();
@@ -596,7 +608,8 @@ export class PersonService extends BaseService {
           if (visited.has(other.id)) {
             continue;
           }
-          if (iouNormalized(head, other) >= iouThreshold) {
+          const { iou, iomin } = overlap(head, other);
+          if (iou >= iouThreshold || iomin >= ioMinThreshold) {
             visited.add(other.id);
             cluster.push(other);
             queue.push(other);
