@@ -8,7 +8,7 @@
   import { handleError } from '$lib/utils/handle-error';
   import { type AssetResponseDto } from '@immich/sdk';
   import { IconButton, Text } from '@immich/ui';
-  import { mdiClose, mdiEye, mdiEyeOff, mdiPencil, mdiPlus } from '@mdi/js';
+  import { mdiEye, mdiEyeOff, mdiPencil, mdiPlus } from '@mdi/js';
   import { DateTime } from 'luxon';
   import { t } from 'svelte-i18n';
 
@@ -151,13 +151,23 @@
           {#if isOwner && person.faces.length > 0}
             <button
               type="button"
-              class="absolute top-1 right-1 hidden h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/30 opacity-0 transition-opacity hover:bg-black/50 focus:bg-black/50 focus:opacity-100 focus:outline-none group-hover:flex group-hover:opacity-100"
+              class="absolute top-1 right-1 hidden h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/30 opacity-0 transition-opacity hover:bg-black/50 focus:bg-black/50 focus:opacity-100 focus:outline-none group-hover:flex group-hover:opacity-100"
               aria-label={$t('remove')}
               title={$t('remove')}
               onclick={(event) => handleRemovePersonFromAsset(event, person.faces, person.name)}
             >
-              <svg viewBox="0 0 24 24" class="h-4 w-4" aria-hidden="true">
-                <path d={mdiClose} fill="white" stroke="black" stroke-width="1.5" stroke-linejoin="round" />
+              <!--
+                Two pairs of <line>s: the first pair draws a wider black outline,
+                the second pair draws the white X on top with stroke-width=5 so
+                the white "bars" of the cross render at ~5px.
+                viewBox is 24x24 and the rendered icon size is h-6 w-6 (24px),
+                so 1 svg unit ≈ 1 css px.
+              -->
+              <svg viewBox="0 0 24 24" class="h-6 w-6" aria-hidden="true">
+                <line x1="6" y1="6" x2="18" y2="18" stroke="black" stroke-width="9" stroke-linecap="round" />
+                <line x1="18" y1="6" x2="6" y2="18" stroke="black" stroke-width="9" stroke-linecap="round" />
+                <line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="5" stroke-linecap="round" />
+                <line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="5" stroke-linecap="round" />
               </svg>
             </button>
           {/if}
