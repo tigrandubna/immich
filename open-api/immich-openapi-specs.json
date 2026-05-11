@@ -5473,6 +5473,51 @@
         "x-immich-state": "Stable"
       }
     },
+    "/faces/{id}/person": {
+      "delete": {
+        "description": "Clear the personId on the face while keeping the face row (bounding box, embedding, sidecar entry) intact.",
+        "operationId": "unassignFace",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Remove person assignment from a face",
+        "tags": [
+          "Faces"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v1",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "face.update"
+      }
+    },
     "/faces/{id}/thumbnail": {
       "get": {
         "description": "Return a cropped JPEG centered on the face bounding box of the given face.",
