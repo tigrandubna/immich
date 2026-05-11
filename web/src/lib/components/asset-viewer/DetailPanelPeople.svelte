@@ -5,9 +5,10 @@
   import { Route } from '$lib/route';
   import { locale } from '$lib/stores/preferences.store';
   import { getPeopleThumbnailUrl } from '$lib/utils';
+  import { handleError } from '$lib/utils/handle-error';
   import { type AssetResponseDto } from '@immich/sdk';
   import { IconButton, Text } from '@immich/ui';
-  import { mdiEye, mdiEyeOff, mdiPencil, mdiPlus } from '@mdi/js';
+  import { mdiClose, mdiEye, mdiEyeOff, mdiPencil, mdiPlus } from '@mdi/js';
   import { DateTime } from 'luxon';
   import { t } from 'svelte-i18n';
 
@@ -15,9 +16,36 @@
     asset: AssetResponseDto;
     isOwner: boolean;
     previousRoute: string;
+    onRefresh?: () => void | Promise<void>;
   };
 
-  const { asset, isOwner, previousRoute }: Props = $props();
+  const { asset, isOwner, previousRoute, onRefresh }: Props = $props();
+
+  // Detach all faces of this person from the current asset. The faces stay on
+  // the photo (bounding box, embedding) but are no longer linked to anyone, so
+  // the person tile disappears from this asset's people grid.
+  const handleRemovePersonFromAsset = async (
+    event: MouseEvent,
+    faces: ReadonlyArray<{ id: string }>,
+    name: string,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      await Promise.all(
+        faces.map((face) =>
+          fetch(`/api/faces/${face.id}/person`, { method: 'DELETE' }).then((response) => {
+            if (!response.ok) {
+              throw new Error(`Failed to unassign face ${face.id}: ${response.status}`);
+            }
+          }),
+        ),
+      );
+      await onRefresh?.();
+    } catch (error) {
+      handleError(error, $t('errors.unable_to_save_name'));
+    }
+  };
 
   const unassignedFaces = $derived(asset.unassignedFaces || []);
   const people = $derived(asset.people || []);
@@ -102,7 +130,7 @@
           assetViewerManager.highlightedFaces.some((b) => b.id === f.id),
         )}
         <a
-          class="group outline-none"
+          class="group relative outline-none"
           href={Route.viewPerson(person, { previousRoute })}
           onfocus={() => assetViewerManager.setHighlightedFaces(person.faces)}
           onblur={() => assetViewerManager.clearHighlightedFaces()}
@@ -120,6 +148,19 @@
             highlighted={isHighlighted}
             class="outline-offset-2 outline-immich-primary group-focus-visible:outline-2 dark:outline-immich-dark-primary"
           />
+          {#if isOwner && person.faces.length > 0}
+            <button
+              type="button"
+              class="absolute top-1 right-1 hidden h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/30 opacity-0 transition-opacity hover:bg-black/50 focus:bg-black/50 focus:opacity-100 focus:outline-none group-hover:flex group-hover:opacity-100"
+              aria-label={$t('remove')}
+              title={$t('remove')}
+              onclick={(event) => handleRemovePersonFromAsset(event, person.faces, person.name)}
+            >
+              <svg viewBox="0 0 24 24" class="h-4 w-4" aria-hidden="true">
+                <path d={mdiClose} fill="white" stroke="black" stroke-width="1.5" stroke-linejoin="round" />
+              </svg>
+            </button>
+          {/if}
           <p class="mt-1 truncate font-medium" title={person.name}>{person.name}</p>
           {#if person.birthDate && person.formattedAge}
             <p class="font-light {visiblePeople.length > 6 ? 'text-xs' : ''}" title={person.formattedBirthDate!}>

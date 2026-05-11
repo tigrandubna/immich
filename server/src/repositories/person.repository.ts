@@ -35,7 +35,9 @@ export interface AssetFaceId {
 export interface UpdateFacesData {
   oldPersonId?: string;
   faceIds?: string[];
-  newPersonId: string;
+  // null clears the person assignment (face stays on the asset, no longer
+  // linked to any person). Used by the "remove from photo" action.
+  newPersonId: string | null;
 }
 
 export interface PersonStatistics {
@@ -386,7 +388,7 @@ export class PersonRepository {
   }
 
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
-  async reassignFace(assetFaceId: string, newPersonId: string): Promise<number> {
+  async reassignFace(assetFaceId: string, newPersonId: string | null): Promise<number> {
     const result = await this.db
       .updateTable('asset_face')
       .set({ personId: newPersonId })

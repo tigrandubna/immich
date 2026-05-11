@@ -149,7 +149,7 @@
 
     <DetailPanelDescription {asset} {isOwner} />
     <DetailPanelRating {asset} {isOwner} />
-    <DetailPanelPeople {asset} {isOwner} {previousRoute} />
+    <DetailPanelPeople {asset} {isOwner} {previousRoute} onRefresh={handleRefreshPeople} />
 
     <div class="p-4">
       {#if asset.exifInfo}

@@ -75,6 +75,19 @@ export class FaceController {
     return this.service.deleteFace(auth, id, dto);
   }
 
+  @Delete(':id/person')
+  @Authenticated({ permission: Permission.FaceUpdate })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Endpoint({
+    summary: 'Remove person assignment from a face',
+    description:
+      'Clear the personId on the face while keeping the face row (bounding box, embedding, sidecar entry) intact.',
+    history: new HistoryBuilder().added('v1'),
+  })
+  unassignFace(@Auth() auth: AuthDto, @Param() { id }: UUIDParamDto): Promise<void> {
+    return this.service.unassignFace(auth, id);
+  }
+
   @Get(':id/thumbnail')
   @FileResponse()
   @Authenticated({ permission: Permission.FaceRead })

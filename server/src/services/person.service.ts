@@ -642,7 +642,7 @@ export class PersonService extends BaseService {
         // Conflicting names — clear all, drop all but one, then re-attach via vector search.
         const [keep, ...rest] = cluster;
         const restIds = rest.map((f) => f.id);
-        await this.personRepository.reassignFaces({ faceIds: [keep.id], newPersonId: null as never });
+        await this.personRepository.reassignFaces({ faceIds: [keep.id], newPersonId: null });
         idsToRemove.push(...restIds);
 
         if (keep.embedding) {
@@ -1024,5 +1024,31 @@ export class PersonService extends BaseService {
     await this.requireAccess({ auth, permission: Permission.FaceDelete, ids: [id] });
 
     return dto.force ? this.personRepository.deleteAssetFace(id) : this.personRepository.softDeleteAssetFaces(id);
+  }
+
+  /**
+   * Remove the person assignment from a face. The face row stays on the asset
+   * (bounding box, embedding, sidecar entry), only personId is cleared so the
+   * face is no longer attributed to anyone.
+   */
+  async unassignFace(auth: AuthDto, id: string): Promise<void> {
+    await this.requireAccess({ auth, permission: Permission.FaceUpdate, ids: [id] });
+
+    const face = await this.personRepository.getFaceById(id);
+    if (!face.person) {
+      return;
+    }
+    const previousPerson = face.person;
+
+    await this.personRepository.reassignFace(id, null);
+
+    // If this face was the person's feature photo, regenerate it from another face.
+    if (previousPerson.faceAssetId === id) {
+      await this.createNewFeaturePhoto([previousPerson.id]);
+    }
+
+    if (face.assetId) {
+      await this.queueFaceSidecarWriteIfEnabled([face.assetId]);
+    }
   }
 }
