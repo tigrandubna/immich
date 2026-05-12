@@ -100,4 +100,9 @@ export class AssetFaceTable {
 
   @Column({ type: 'character varying', nullable: true })
   thumbnailPath!: string | null;
+
+  // Laplacian-variance blur score for the face crop. Higher = sharper.
+  // Computed once at thumbnail generation time and reused for UI filtering.
+  @Column({ type: 'double precision', nullable: true })
+  blurScore!: number | null;
 }

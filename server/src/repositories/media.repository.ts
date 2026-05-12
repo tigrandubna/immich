@@ -161,7 +161,7 @@ export class MediaRepository {
     input: string,
     bbox: { x1: number; y1: number; x2: number; y2: number; sourceWidth: number; sourceHeight: number },
     outputSize = 256,
-  ): Promise<Buffer> {
+  ): Promise<{ buffer: Buffer; blurScore: number | null }> {
     const image = sharp(input, { failOn: 'none' });
     const metadata = await image.metadata();
     const previewW = metadata.width ?? bbox.sourceWidth;
@@ -185,11 +185,32 @@ export class MediaRepository {
     const width = Math.max(1, right - left);
     const height = Math.max(1, bottom - top);
 
-    return image
-      .extract({ left, top, width, height })
-      .resize(outputSize, outputSize, { fit: 'cover' })
-      .jpeg({ quality: 85 })
-      .toBuffer();
+    const baseCrop = image.extract({ left, top, width, height }).resize(outputSize, outputSize, { fit: 'cover' });
+
+    const [buffer, blurScore] = await Promise.all([
+      baseCrop.clone().jpeg({ quality: 85 }).toBuffer(),
+      this.computeBlurScore(baseCrop.clone()),
+    ]);
+    return { buffer, blurScore };
+  }
+
+  // Laplacian-variance blur metric. Apply a 3x3 Laplacian kernel to the
+  // greyscale face crop and return the variance of the response — higher
+  // values indicate sharper edges, very low values indicate a blurry face.
+  private async computeBlurScore(pipeline: sharp.Sharp): Promise<number | null> {
+    try {
+      const stats = await pipeline
+        .greyscale()
+        .convolve({ width: 3, height: 3, kernel: [0, 1, 0, 1, -4, 1, 0, 1, 0] })
+        .stats();
+      const stdev = stats.channels[0]?.stdev;
+      if (typeof stdev !== 'number' || !Number.isFinite(stdev)) {
+        return null;
+      }
+      return Number((stdev * stdev).toFixed(2));
+    } catch {
+      return null;
+    }
   }
 
   private applyEdits(pipeline: sharp.Sharp, edits: AssetEditActionItem[]): sharp.Sharp {

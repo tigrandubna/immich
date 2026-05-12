@@ -172,10 +172,13 @@ export class PersonService extends BaseService {
     return this.personRepository.getStatistics(id);
   }
 
-  async getFacesForPerson(auth: AuthDto, personId: string): Promise<Array<{ id: string; assetId: string }>> {
+  async getFacesForPerson(
+    auth: AuthDto,
+    personId: string,
+  ): Promise<Array<{ id: string; assetId: string; blurScore: number | null }>> {
     await this.requireAccess({ auth, permission: Permission.PersonRead, ids: [personId] });
     const rows = await this.personRepository.getFacesByPersonId(personId);
-    return rows.map((row) => ({ id: row.id, assetId: row.assetId }));
+    return rows.map((row) => ({ id: row.id, assetId: row.assetId, blurScore: row.blurScore }));
   }
 
   async getThumbnail(auth: AuthDto, id: string): Promise<ImmichFileResponse> {
@@ -210,7 +213,11 @@ export class PersonService extends BaseService {
   private async ensureFaceThumbnail(
     face: NonNullable<Awaited<ReturnType<typeof this.personRepository.getFaceForThumbnailJob>>>,
   ): Promise<string> {
-    if (face.thumbnailPath && (await this.storageRepository.checkFileExists(face.thumbnailPath, fsConstants.R_OK))) {
+    if (
+      face.thumbnailPath &&
+      face.blurScore !== null &&
+      (await this.storageRepository.checkFileExists(face.thumbnailPath, fsConstants.R_OK))
+    ) {
       return face.thumbnailPath;
     }
 
@@ -246,7 +253,7 @@ export class PersonService extends BaseService {
     const targetPath = StorageCore.getFaceThumbnailPath({ id: face.id, ownerId: face.ownerId });
     this.storageRepository.mkdirSync(dirname(targetPath));
 
-    const buffer = await this.mediaRepository.cropFace(asset.path, {
+    const { buffer, blurScore } = await this.mediaRepository.cropFace(asset.path, {
       x1: face.boundingBoxX1,
       y1: face.boundingBoxY1,
       x2: face.boundingBoxX2,
@@ -256,7 +263,7 @@ export class PersonService extends BaseService {
     });
 
     await this.storageRepository.createOrOverwriteFile(targetPath, buffer);
-    await this.personRepository.updateThumbnailPath(face.id, targetPath);
+    await this.personRepository.updateThumbnailPath(face.id, targetPath, blurScore);
     return targetPath;
   }
 

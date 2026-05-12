@@ -275,6 +275,7 @@ export class PersonRepository {
         'asset_face.imageWidth',
         'asset_face.imageHeight',
         'asset_face.thumbnailPath',
+        'asset_face.blurScore',
       ])
       .select((eb) =>
         jsonObjectFrom(
@@ -289,10 +290,10 @@ export class PersonRepository {
       .executeTakeFirst();
   }
 
-  async updateThumbnailPath(faceId: string, thumbnailPath: string | null) {
+  async updateThumbnailPath(faceId: string, thumbnailPath: string | null, blurScore: number | null = null) {
     await this.db
       .updateTable('asset_face')
-      .set({ thumbnailPath })
+      .set({ thumbnailPath, blurScore })
       .where('id', '=', faceId)
       .execute();
   }
@@ -303,7 +304,11 @@ export class PersonRepository {
       .select(['asset_face.id'])
       .where('asset_face.deletedAt', 'is', null)
       .where('asset_face.isVisible', 'is', true)
-      .$if(!force, (qb) => qb.where('asset_face.thumbnailPath', 'is', null))
+      .$if(!force, (qb) =>
+        qb.where((eb) =>
+          eb.or([eb('asset_face.thumbnailPath', 'is', null), eb('asset_face.blurScore', 'is', null)]),
+        ),
+      )
       .stream();
   }
 
@@ -666,7 +671,7 @@ export class PersonRepository {
           .on('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
           .on('asset.deletedAt', 'is', null),
       )
-      .select(['asset_face.id', 'asset_face.assetId', 'asset.fileCreatedAt'])
+      .select(['asset_face.id', 'asset_face.assetId', 'asset_face.blurScore', 'asset.fileCreatedAt'])
       .where('asset_face.personId', '=', personId)
       .where('asset_face.deletedAt', 'is', null)
       .where('asset_face.isVisible', 'is', true)

@@ -279,6 +279,7 @@ export type AssetFace = {
   updateId: string;
   isVisible: boolean;
   thumbnailPath: string | null;
+  blurScore: number | null;
 };
 
 export type PluginFilter = Selectable<PluginFilterTable> & {

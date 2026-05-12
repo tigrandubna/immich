@@ -87,8 +87,31 @@
   // is preserved when the viewer closes.
   let isAssetViewerOpen = $derived(!!$page.params.assetId);
   let faceGridContainer = $state<HTMLDivElement>();
-  let faceList = $state<Array<{ id: string; assetId: string }>>([]);
+  let faceList = $state<Array<{ id: string; assetId: string; blurScore: number | null }>>([]);
   let faceListLoading = $state(false);
+  // Hide faces whose Laplacian-variance blur score is below this threshold.
+  // Persisted in localStorage so the toggle survives page reloads.
+  const BLUR_THRESHOLD = 100;
+  let hideBlurry = $state(false);
+  $effect(() => {
+    if (typeof localStorage !== 'undefined') {
+      hideBlurry = localStorage.getItem('immich:hideBlurryFaces') === '1';
+    }
+  });
+  const toggleHideBlurry = () => {
+    hideBlurry = !hideBlurry;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('immich:hideBlurryFaces', hideBlurry ? '1' : '0');
+    }
+  };
+  let visibleFaces = $derived(
+    hideBlurry
+      ? faceList.filter((f) => f.blurScore === null || f.blurScore >= BLUR_THRESHOLD)
+      : faceList,
+  );
+  let blurryCount = $derived(
+    faceList.filter((f) => f.blurScore !== null && f.blurScore < BLUR_THRESHOLD).length,
+  );
 
   const loadFaceList = async () => {
     faceListLoading = true;
@@ -561,8 +584,17 @@
       {:else if faceList.length === 0}
         <p class="py-10 text-center text-gray-500">{$t('no_results')}</p>
       {:else}
+        <div class="mb-3 flex items-center gap-3">
+          <label class="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+            <input type="checkbox" checked={hideBlurry} onchange={toggleHideBlurry} />
+            {$t('hide_blurry_faces')}
+          </label>
+          {#if hideBlurry && blurryCount > 0}
+            <span class="text-xs text-gray-500">{$t('hidden_faces_count', { values: { count: blurryCount } })}</span>
+          {/if}
+        </div>
         <div class="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11">
-          {#each faceList as face (face.id)}
+          {#each visibleFaces as face (face.id)}
             <a
               href={`/people/${person.id}/photos/${face.assetId}?${QueryParameter.VIEW}=faces`}
               class="block aspect-square overflow-hidden rounded bg-gray-200 dark:bg-gray-800"
