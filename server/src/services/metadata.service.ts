@@ -405,7 +405,7 @@ export class MetadataService extends BaseService {
     }
 
     if (isFaceImportEnabled(metadata) && this.hasTaggedFaces(exifTags)) {
-      tasks.push(() => this.applyTaggedFaces(asset, exifTags));
+      tasks.push(() => this.applyTaggedFaces(asset, exifTags, { width: assetWidth, height: assetHeight }));
     }
 
     await tasks.all();
@@ -977,6 +977,7 @@ export class MetadataService extends BaseService {
   private orientRegionInfo(
     regionInfo: ImmichTagsWithFaces['RegionInfo'],
     orientation: ExifOrientation | undefined,
+    displayDimensions?: { width: number | null | undefined; height: number | null | undefined },
   ): ImmichTagsWithFaces['RegionInfo'] {
     // skip default Orientation
     if (orientation === undefined || orientation === ExifOrientation.Horizontal) {
@@ -984,6 +985,24 @@ export class MetadataService extends BaseService {
     }
 
     const isSidewards = this.isOrientationSidewards(orientation);
+
+    // MWG spec says AppliedToDimensions is the as-stored (pre-rotation) image
+    // size and regions are in as-stored coordinates. But many tools (including
+    // this fork's writer, Apple Photos, some Lightroom exports) write regions
+    // in the display orientation instead. If the XMP's AppliedToDimensions
+    // aspect ratio matches the asset's display aspect ratio for a sidewards
+    // orientation, the regions are already in display coords — applying the
+    // swap here would rotate them off the face. Skip the transform in that
+    // case so cropFace lines up with the preview.
+    if (isSidewards && displayDimensions?.width && displayDimensions?.height) {
+      const xmpAR = regionInfo.AppliedToDimensions.W / regionInfo.AppliedToDimensions.H;
+      const displayAR = displayDimensions.width / displayDimensions.height;
+      const bothPortrait = xmpAR < 1 && displayAR < 1;
+      const bothLandscape = xmpAR > 1 && displayAR > 1;
+      if (bothPortrait || bothLandscape) {
+        return regionInfo;
+      }
+    }
 
     // swap image dimensions in AppliedToDimensions if orientation is sidewards
     const adjustedAppliedToDimensions = isSidewards
@@ -1046,6 +1065,7 @@ export class MetadataService extends BaseService {
   private async applyTaggedFaces(
     asset: { id: string; ownerId: string; faces: { id: string; sourceType: SourceType }[]; originalPath: string },
     tags: ImmichTags,
+    displayDimensions?: { width: number | null | undefined; height: number | null | undefined },
   ) {
     if (!tags.RegionInfo?.AppliedToDimensions || tags.RegionInfo.RegionList.length === 0) {
       return;
@@ -1057,7 +1077,7 @@ export class MetadataService extends BaseService {
     const missing: (Insertable<PersonTable> & { ownerId: string })[] = [];
     const missingWithFaceAsset: { id: string; ownerId: string; faceAssetId: string }[] = [];
 
-    const adjustedRegionInfo = this.orientRegionInfo(tags.RegionInfo, tags.Orientation);
+    const adjustedRegionInfo = this.orientRegionInfo(tags.RegionInfo, tags.Orientation, displayDimensions);
     const imageWidth = adjustedRegionInfo.AppliedToDimensions.W;
     const imageHeight = adjustedRegionInfo.AppliedToDimensions.H;
 
