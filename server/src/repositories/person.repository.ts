@@ -6,6 +6,7 @@ import { AssetFace } from 'src/database';
 import { Chunked, ChunkedArray, DummyValue, GenerateSql } from 'src/decorators';
 import { AssetFileType, AssetVisibility, SourceType } from 'src/enum';
 import { DB } from 'src/schema';
+import { asUuid } from 'src/utils/database';
 import { AssetFaceTable } from 'src/schema/tables/asset-face.table';
 import { FaceSearchTable } from 'src/schema/tables/face-search.table';
 import { PersonTable } from 'src/schema/tables/person.table';
@@ -696,6 +697,11 @@ export class PersonRepository {
   @GenerateSql({ params: [DummyValue.UUID] })
   async deleteAssetFace(id: string): Promise<void> {
     await this.db.deleteFrom('asset_face').where('asset_face.id', '=', id).execute();
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID] })
+  async deleteAllFacesForAsset(assetId: string): Promise<void> {
+    await this.db.deleteFrom('asset_face').where('asset_face.assetId', '=', asUuid(assetId)).execute();
   }
 
   @GenerateSql({ params: [DummyValue.UUID] })

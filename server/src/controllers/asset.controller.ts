@@ -88,6 +88,20 @@ export class AssetController {
     return this.service.get(auth, id) as Promise<AssetResponseDto>;
   }
 
+  @Post(':id/redetect-faces')
+  @Authenticated({ permission: Permission.AssetUpdate })
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Endpoint({
+    summary: 'Re-detect faces on a single asset',
+    description:
+      'Hard-deletes all current faces of this asset (cascading face embeddings) and queues a fresh face-detection job. ' +
+      'Returns 202; the client should poll the asset endpoint to see the new faces as they arrive.',
+    history: new HistoryBuilder().added('v1'),
+  })
+  redetectFaces(@Auth() auth: AuthDto, @Param() { id }: UUIDParamDto): Promise<void> {
+    return this.service.redetectFaces(auth, id);
+  }
+
   @Put('copy')
   @Authenticated({ permission: Permission.AssetCopy })
   @HttpCode(HttpStatus.NO_CONTENT)

@@ -7,8 +7,8 @@
   import { getPeopleThumbnailUrl } from '$lib/utils';
   import { handleError } from '$lib/utils/handle-error';
   import { type AssetResponseDto } from '@immich/sdk';
-  import { IconButton, Text } from '@immich/ui';
-  import { mdiEye, mdiEyeOff, mdiPencil, mdiPlus } from '@mdi/js';
+  import { IconButton, modalManager, Text, toastManager } from '@immich/ui';
+  import { mdiEye, mdiEyeOff, mdiPencil, mdiPlus, mdiRefresh } from '@mdi/js';
   import { DateTime } from 'luxon';
   import { t } from 'svelte-i18n';
 
@@ -20,6 +20,47 @@
   };
 
   const { asset, isOwner, previousRoute, onRefresh }: Props = $props();
+
+  let isRedetecting = $state(false);
+
+  // Wipe every face on this asset (server-side, cascading to embeddings) and
+  // re-run ML detection. We poll the asset endpoint via onRefresh so the
+  // panel updates live as faces and people land.
+  const handleRedetectFaces = async () => {
+    if (isRedetecting) {
+      return;
+    }
+    const confirmed = await modalManager.showDialog({
+      prompt: $t('redetect_all_faces_prompt'),
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      isRedetecting = true;
+      const response = await fetch(`/api/assets/${asset.id}/redetect-faces`, { method: 'POST' });
+      if (!response.ok && response.status !== 202) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      toastManager.primary($t('redetect_all_faces_started'));
+
+      // Poll for fresh faces. Show the wipe immediately, then refresh on a
+      // schedule until detection + recognition + thumbnail-generation have
+      // had a chance to run. Total ~36s. The component re-renders with new
+      // asset data each time onRefresh resolves.
+      await onRefresh?.();
+      const delays = [2000, 2000, 3000, 3000, 4000, 4000, 5000, 6000, 7000];
+      for (const delay of delays) {
+        await new Promise((r) => setTimeout(r, delay));
+        await onRefresh?.();
+      }
+    } catch (error) {
+      handleError(error, $t('errors.cant_apply_changes'));
+    } finally {
+      isRedetecting = false;
+    }
+  };
 
   // Detach all faces of this person from the current asset. The faces stay on
   // the photo (bounding box, embedding) but are no longer linked to anyone, so
@@ -96,6 +137,18 @@
             onclick={() => assetViewerManager.toggleHiddenPeople()}
           />
         {/if}
+        <IconButton
+          aria-label={$t('redetect_all_faces')}
+          title={$t('redetect_all_faces')}
+          icon={mdiRefresh}
+          size="medium"
+          shape="round"
+          color="secondary"
+          variant="ghost"
+          disabled={isRedetecting}
+          loading={isRedetecting}
+          onclick={handleRedetectFaces}
+        />
         <IconButton
           aria-label={$t('tag_people')}
           icon={mdiPlus}

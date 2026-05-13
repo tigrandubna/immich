@@ -455,6 +455,16 @@ export class AssetService extends BaseService {
     await this.assetRepository.deleteBulkMetadata(dto.items);
   }
 
+  // Hard-delete every face on this asset, then queue a fresh face detection
+  // run. Useful when the existing face data is wrong (off-position imports,
+  // outdated XMP regions). The deletion cascades to face_search via FK so all
+  // embeddings go too; ML detection will rebuild from scratch.
+  async redetectFaces(auth: AuthDto, id: string): Promise<void> {
+    await this.requireAccess({ auth, permission: Permission.AssetUpdate, ids: [id] });
+    await this.personRepository.deleteAllFacesForAsset(id);
+    await this.jobRepository.queue({ name: JobName.AssetDetectFaces, data: { id } });
+  }
+
   async run(auth: AuthDto, dto: AssetJobsDto) {
     await this.requireAccess({ auth, permission: Permission.AssetUpdate, ids: dto.assetIds });
 
