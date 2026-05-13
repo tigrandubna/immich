@@ -451,34 +451,48 @@ def match_regions_to_faces(
 # Driver
 # -----------------------------------------------------------------------
 
+@dataclass
+class FileReport:
+    xmp: Path
+    jpg: Path
+    status: str           # fixed | would-fix | no-change | no-regions | err-* | unmatched-only
+    n_matched: int
+    n_unmatched: int
+    n_total: int
+    max_shift: float      # 0..~1.4, largest center-shift across regions, fraction of image diagonal
+    detail: list[str]     # lines per region for --verbose
+
+
 def process_pair(
     jpg: Path,
     xmp: Path,
     ml: MLClient,
     max_ratio: float,
+    min_shift: float,
     dry_run: bool,
-    verbose: bool,
-) -> tuple[str, int, int, int]:
-    """Return (status, n_matched, n_unmatched, n_total)."""
+) -> FileReport:
+    """Process one pair; return a FileReport. Mutation only happens when
+    n_changed > 0 and not dry_run and max_shift >= min_shift.
+    """
     text = xmp.read_text(encoding="utf-8", errors="replace")
     parsed = parse_xmp(text)
     if not parsed.regions:
-        return ("no-regions", 0, 0, 0)
+        return FileReport(xmp, jpg, "no-regions", 0, 0, 0, 0.0, [])
 
     dims = read_image_dimensions(jpg)
     if dims is None:
-        sys.stderr.write(f"[warn] cannot read dims of {jpg}\n")
-        return ("err-dims", 0, 0, len(parsed.regions))
+        return FileReport(xmp, jpg, "err-dims", 0, 0, len(parsed.regions), 0.0, [])
     img_w, img_h = dims
+    diag = (img_w ** 2 + img_h ** 2) ** 0.5 or 1.0
 
     try:
         faces = ml.detect_faces(jpg)
     except requests.HTTPError as e:
         sys.stderr.write(f"[warn] ML service rejected {jpg}: {e}\n")
-        return ("err-ml", 0, 0, len(parsed.regions))
+        return FileReport(xmp, jpg, "err-ml", 0, 0, len(parsed.regions), 0.0, [])
     except requests.RequestException as e:
         sys.stderr.write(f"[warn] ML service unreachable for {jpg}: {e}\n")
-        return ("err-ml", 0, 0, len(parsed.regions))
+        return FileReport(xmp, jpg, "err-ml", 0, 0, len(parsed.regions), 0.0, [])
 
     matches = match_regions_to_faces(parsed.regions, faces, img_w, img_h, max_ratio)
 
@@ -486,11 +500,14 @@ def process_pair(
     n_changed = 0
     n_matched = 0
     n_unmatched = 0
+    max_shift = 0.0
+    detail: list[str] = []
+    pending_edits: list[tuple[str, str, str]] = []  # (old_block, new_block, region_name)
+
     for m in matches:
         if m.ml_box is None:
             n_unmatched += 1
-            if verbose:
-                print(f"  - {m.region.name}: no ML face within {max_ratio:.0%} (best ratio {m.distance_ratio:.2f})")
+            detail.append(f"  - {m.region.name}: no ML face within {max_ratio:.0%} (best ratio {m.distance_ratio:.2f})")
             continue
         n_matched += 1
         bb = m.ml_box["boundingBox"]
@@ -503,47 +520,68 @@ def process_pair(
         new_w = w_px / img_w
         new_h = h_px / img_h
 
-        # Skip if the region is already at the right position (within 0.5%).
-        if (abs(new_cx - m.region.cx) < 0.005
-                and abs(new_cy - m.region.cy) < 0.005
-                and abs(new_w - m.region.w) < 0.01
-                and abs(new_h - m.region.h) < 0.01):
+        shift_px = (((new_cx - m.region.cx) * img_w) ** 2 + ((new_cy - m.region.cy) * img_h) ** 2) ** 0.5
+        shift = shift_px / diag
+        if shift > max_shift:
+            max_shift = shift
+
+        if (abs(new_cx - m.region.cx) < 0.005 and abs(new_cy - m.region.cy) < 0.005
+                and abs(new_w - m.region.w) < 0.01 and abs(new_h - m.region.h) < 0.01):
+            detail.append(f"  = {m.region.name}: already aligned")
             continue
 
         old_block = m.region.raw_match.group(0)
         new_block = rewrite_region_area(old_block, new_cx, new_cy, new_w, new_h)
         if new_block == old_block:
             continue
-        # Replace the first occurrence of old_block in new_text. We use .replace
-        # (single replacement) because the same name shouldn't appear twice
-        # with byte-identical region payloads.
+        pending_edits.append((old_block, new_block, m.region.name))
+        detail.append(
+            f"  ✓ {m.region.name}: ({m.region.cx:.3f},{m.region.cy:.3f}) -> ({new_cx:.3f},{new_cy:.3f})  shift={shift:.2f}"
+        )
+
+    will_apply = len(pending_edits) > 0 and max_shift >= min_shift
+
+    if not will_apply:
+        if len(pending_edits) == 0:
+            if n_matched == 0 and n_unmatched > 0:
+                return FileReport(xmp, jpg, "unmatched-only", n_matched, n_unmatched, len(parsed.regions), max_shift, detail)
+            return FileReport(xmp, jpg, "no-change", n_matched, n_unmatched, len(parsed.regions), max_shift, detail)
+        # We had real changes but they're below min_shift threshold — treat as no-op.
+        return FileReport(xmp, jpg, "no-change", n_matched, n_unmatched, len(parsed.regions), max_shift, detail)
+
+    # Apply
+    for old_block, new_block, region_name in pending_edits:
         replaced = new_text.replace(old_block, new_block, 1)
         if replaced == new_text:
-            sys.stderr.write(f"[bug] could not splice region for {m.region.name} in {xmp}\n")
+            sys.stderr.write(f"[bug] could not splice region for {region_name} in {xmp}\n")
             continue
         new_text = replaced
         n_changed += 1
-        if verbose:
-            print(f"  ✓ {m.region.name}: ({m.region.cx:.3f},{m.region.cy:.3f}) -> ({new_cx:.3f},{new_cy:.3f})")
 
     if n_changed == 0:
-        return ("no-change", n_matched, n_unmatched, len(parsed.regions))
+        return FileReport(xmp, jpg, "no-change", n_matched, n_unmatched, len(parsed.regions), max_shift, detail)
 
     if dry_run:
-        return ("would-fix", n_matched, n_unmatched, len(parsed.regions))
+        return FileReport(xmp, jpg, "would-fix", n_matched, n_unmatched, len(parsed.regions), max_shift, detail)
 
-    # Backup once
     backup = xmp.with_suffix(xmp.suffix + ".bak")
     if not backup.exists():
         shutil.copy2(xmp, backup)
     xmp.write_text(new_text, encoding="utf-8")
-    return ("fixed", n_matched, n_unmatched, len(parsed.regions))
+    return FileReport(xmp, jpg, "fixed", n_matched, n_unmatched, len(parsed.regions), max_shift, detail)
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description="Repair MWG-Region coordinates in XMP sidecars using immich's ML service.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Typical workflow:\n"
+            "  1. Find problems:   python3 fix_xmp_face_regions.py --report /path/to/photos\n"
+            "  2. Preview a fix:   python3 fix_xmp_face_regions.py --dry-run --verbose /path/to/photos\n"
+            "  3. Apply:           python3 fix_xmp_face_regions.py /path/to/photos\n"
+            "  4. In immich:       Job Status -> Sidecar -> Sync\n"
+        ),
     )
     p.add_argument("paths", nargs="+", type=Path, help="Directory or file(s) to scan.")
     p.add_argument("--ml-url", default=DEFAULT_ML_URL, help=f"Base URL of immich-machine-learning (default {DEFAULT_ML_URL}).")
@@ -551,32 +589,64 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE, help=f"ML detection min score (default {DEFAULT_MIN_SCORE}).")
     p.add_argument("--max-distance", type=float, default=DEFAULT_MAX_DISTANCE_RATIO,
                    help=f"Max region-to-ML-face center distance as fraction of image diagonal (default {DEFAULT_MAX_DISTANCE_RATIO}).")
+    p.add_argument("--min-shift", type=float, default=0.0,
+                   help="Only touch / report files where at least one region moves by this fraction of the image diagonal. "
+                        "Useful for ignoring micro-corrections; try 0.05 (5%%) to focus on real breakage.")
+    p.add_argument("--report", action="store_true",
+                   help="Don't write anything. Print only files that have at least one region needing repair, "
+                        "sorted by worst-shift descending. Pairs well with --min-shift.")
     p.add_argument("--dry-run", action="store_true", help="Show what would change but don't write.")
-    p.add_argument("-v", "--verbose", action="store_true", help="Per-region log output.")
+    p.add_argument("-v", "--verbose", action="store_true", help="Per-region log output (in addition to summary).")
     args = p.parse_args(argv)
+
+    if args.report:
+        args.dry_run = True
 
     ml = MLClient(args.ml_url, args.model, args.min_score)
 
-    summary = {"fixed": 0, "would-fix": 0, "no-change": 0, "no-regions": 0, "err-dims": 0, "err-ml": 0}
+    reports: list[FileReport] = []
+    summary: dict[str, int] = {}
     matched_total = 0
     unmatched_total = 0
     files_total = 0
 
     for jpg, xmp in discover_jobs(args.paths):
         files_total += 1
-        print(f"[{files_total}] {xmp}")
-        status, m, u, _t = process_pair(jpg, xmp, ml, args.max_distance, args.dry_run, args.verbose)
-        summary[status] = summary.get(status, 0) + 1
-        matched_total += m
-        unmatched_total += u
+        report = process_pair(jpg, xmp, ml, args.max_distance, args.min_shift, args.dry_run)
+        reports.append(report)
+        summary[report.status] = summary.get(report.status, 0) + 1
+        matched_total += report.n_matched
+        unmatched_total += report.n_unmatched
+
+        if not args.report:
+            print(f"[{files_total}] {report.xmp}")
+            if args.verbose:
+                for line in report.detail:
+                    print(line)
+
+    if args.report:
+        # Filter to files that need attention.
+        interesting = [r for r in reports if r.status in ("would-fix", "fixed", "unmatched-only", "err-ml", "err-dims")
+                       and (r.max_shift >= args.min_shift or r.n_unmatched > 0 or r.status.startswith("err"))]
+        interesting.sort(key=lambda r: (-r.max_shift, -r.n_unmatched))
+        print()
+        if not interesting:
+            print(f"No XMP regions need fixing across {files_total} files.")
+        else:
+            print(f"{'shift':>6}  {'fix':>4}  {'??':>3}  file")
+            print(f"{'-----':>6}  {'---':>4}  {'--':>3}  ----")
+            for r in interesting:
+                shift_str = f"{r.max_shift * 100:.1f}%" if r.max_shift > 0 else "—"
+                fix_count = len([d for d in r.detail if d.lstrip().startswith("✓")])
+                print(f"{shift_str:>6}  {fix_count:>4}  {r.n_unmatched:>3}  {r.xmp}")
 
     print()
     print(f"--- summary ---")
-    print(f"files scanned   : {files_total}")
-    print(f"regions matched : {matched_total}")
+    print(f"files scanned    : {files_total}")
+    print(f"regions matched  : {matched_total}")
     print(f"regions unmatched: {unmatched_total}")
-    for k, v in summary.items():
-        print(f"{k:16s}: {v}")
+    for k, v in sorted(summary.items()):
+        print(f"  {k:16s}: {v}")
     return 0
 
 
