@@ -143,14 +143,19 @@ export class PersonController {
   @Authenticated({ permission: Permission.PersonRead })
   @Endpoint({
     summary: 'List faces of a person',
-    description: 'Return faces belonging to the given person, with their asset IDs, ordered by capture date desc.',
+    description:
+      'Return faces belonging to the given person, with their asset IDs. Default order is capture date desc. ' +
+      'When the optional `anchor` query parameter is set to a face id of this same person, the list is sorted by ' +
+      'cosine distance between each face\'s embedding and the anchor\'s embedding (closest first), useful for ' +
+      'spotting misattributions in a tightly clustered person.',
     history: new HistoryBuilder().added('v1'),
   })
   getPersonFacesList(
     @Auth() auth: AuthDto,
     @Param() { id }: UUIDParamDto,
-  ): Promise<Array<{ id: string; assetId: string }>> {
-    return this.service.getFacesForPerson(auth, id);
+    @Query('anchor') anchor?: string,
+  ): Promise<Array<{ id: string; assetId: string; blurScore: number | null; distance?: number }>> {
+    return this.service.getFacesForPerson(auth, id, anchor);
   }
 
   @Get(':id/thumbnail')

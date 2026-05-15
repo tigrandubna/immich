@@ -54,6 +54,7 @@ export enum QueryParameter {
   PAGE = 'page',
   PATH = 'path',
   VIEW = 'view',
+  ANCHOR = 'anchor',
 }
 
 export enum SessionStorageKey {

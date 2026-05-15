@@ -4,7 +4,8 @@ import { jsonObjectFrom } from 'kysely/helpers/postgres';
 import { InjectKysely } from 'nestjs-kysely';
 import { AssetFace } from 'src/database';
 import { Chunked, ChunkedArray, DummyValue, GenerateSql } from 'src/decorators';
-import { AssetFileType, AssetVisibility, SourceType } from 'src/enum';
+import { AssetFileType, AssetVisibility, SourceType, VectorIndex } from 'src/enum';
+import { probes } from 'src/repositories/database.repository';
 import { DB } from 'src/schema';
 import { asUuid } from 'src/utils/database';
 import { AssetFaceTable } from 'src/schema/tables/asset-face.table';
@@ -678,6 +679,58 @@ export class PersonRepository {
       .where('asset_face.isVisible', 'is', true)
       .orderBy('asset.fileCreatedAt', 'desc')
       .execute();
+  }
+
+  /**
+   * Faces of `personId` ordered by cosine distance to `anchorEmbedding`.
+   * Used for "find faces similar to this one within the same person" — handy
+   * for spotting misattributions in a tightly clustered person.
+   */
+  async getFacesByPersonIdSortedByDistance(
+    personId: string,
+    anchorEmbedding: string,
+  ): Promise<Array<{ id: string; assetId: string; blurScore: number | null; distance: number }>> {
+    return await this.db.transaction().execute(async (trx) => {
+      await sql`set local vchordrq.probes = ${sql.lit(probes[VectorIndex.Face])}`.execute(trx);
+      const rows = await trx
+        .selectFrom('asset_face')
+        .innerJoin('asset', (join) =>
+          join
+            .onRef('asset.id', '=', 'asset_face.assetId')
+            .on('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+            .on('asset.deletedAt', 'is', null),
+        )
+        .innerJoin('face_search', 'face_search.faceId', 'asset_face.id')
+        .select([
+          'asset_face.id',
+          'asset_face.assetId',
+          'asset_face.blurScore',
+          sql<number>`face_search.embedding <=> ${anchorEmbedding}`.as('distance'),
+        ])
+        .where('asset_face.personId', '=', personId)
+        .where('asset_face.deletedAt', 'is', null)
+        .where('asset_face.isVisible', 'is', true)
+        .orderBy('distance', 'asc')
+        .execute();
+      return rows.map((row) => ({
+        id: row.id,
+        assetId: row.assetId,
+        blurScore: row.blurScore,
+        distance: Number(row.distance),
+      }));
+    });
+  }
+
+  async getFaceEmbedding(faceId: string): Promise<string | null> {
+    // pgvector ships an implicit cast vector → text, so selecting it directly
+    // returns the canonical "[0.1,0.2,...]" string, which can then be passed
+    // back as a parameter to `embedding <=> $1` in subsequent queries.
+    const row = await this.db
+      .selectFrom('face_search')
+      .select(sql<string>`face_search.embedding::text`.as('embedding'))
+      .where('face_search.faceId', '=', faceId)
+      .executeTakeFirst();
+    return row?.embedding ?? null;
   }
 
   @GenerateSql()

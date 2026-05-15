@@ -57,6 +57,7 @@
     mdiDotsVertical,
     mdiFaceMan,
     mdiImageMultiple,
+    mdiMagnify,
     mdiShareVariantOutline,
   } from '@mdi/js';
   import { DateTime } from 'luxon';
@@ -87,8 +88,13 @@
   // is preserved when the viewer closes.
   let isAssetViewerOpen = $derived(!!$page.params.assetId);
   let faceGridContainer = $state<HTMLDivElement>();
-  let faceList = $state<Array<{ id: string; assetId: string; blurScore: number | null }>>([]);
+  let faceList = $state<Array<{ id: string; assetId: string; blurScore: number | null; distance?: number }>>([]);
   let faceListLoading = $state(false);
+  // When set in the URL, the face grid is sorted by cosine distance from this
+  // anchor face's embedding instead of by capture date. Lets the user audit a
+  // person's cluster for misattributions ("which faces are farthest from a
+  // confirmed-correct one?").
+  const anchorFaceId = $derived($page.url.searchParams.get(QueryParameter.ANCHOR));
   // Hide faces whose Laplacian-variance blur score is below this threshold.
   // Persisted in localStorage so the toggle survives page reloads.
   const BLUR_THRESHOLD = 100;
@@ -116,7 +122,10 @@
   const loadFaceList = async () => {
     faceListLoading = true;
     try {
-      const response = await fetch(`/api/people/${person.id}/faces`);
+      const url = anchorFaceId
+        ? `/api/people/${person.id}/faces?anchor=${encodeURIComponent(anchorFaceId)}`
+        : `/api/people/${person.id}/faces`;
+      const response = await fetch(url);
       if (response.ok) {
         faceList = await response.json();
       }
@@ -127,11 +136,31 @@
     }
   };
 
+  // Re-fetch whenever the anchor changes (entering or leaving anchor mode).
+  let lastLoadedAnchor = $state<string | null | undefined>(undefined);
   $effect(() => {
-    if (showFaceThumbnails && faceList.length === 0 && !faceListLoading) {
+    if (!showFaceThumbnails) {
+      return;
+    }
+    const wantedAnchor = anchorFaceId ?? null;
+    if (wantedAnchor !== lastLoadedAnchor && !faceListLoading) {
+      lastLoadedAnchor = wantedAnchor;
+      faceList = [];
       void loadFaceList();
     }
   });
+
+  // Set / clear the anchor=<faceId> query param. Uses replaceState so the user
+  // can navigate back out of anchor mode with browser back; preserves view=faces.
+  const setAnchorFace = async (faceId: string | null) => {
+    const url = new URL($page.url);
+    if (faceId) {
+      url.searchParams.set(QueryParameter.ANCHOR, faceId);
+    } else {
+      url.searchParams.delete(QueryParameter.ANCHOR);
+    }
+    await goto(url.pathname + url.search, { replaceState: true, keepFocus: true, noScroll: true });
+  };
 
   const toggleFaceThumbnails = async () => {
     const url = new URL($page.url);
@@ -584,7 +613,7 @@
       {:else if faceList.length === 0}
         <p class="py-10 text-center text-gray-500">{$t('no_results')}</p>
       {:else}
-        <div class="mb-3 flex items-center gap-3">
+        <div class="mb-3 flex flex-wrap items-center gap-3">
           <label class="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
             <input type="checkbox" checked={hideBlurry} onchange={toggleHideBlurry} />
             {$t('hide_blurry_faces')}
@@ -592,28 +621,74 @@
           {#if hideBlurry && blurryCount > 0}
             <span class="text-xs text-gray-500">{$t('hidden_faces_count', { values: { count: blurryCount } })}</span>
           {/if}
+          {#if anchorFaceId}
+            <div
+              class="ms-auto flex items-center gap-2 rounded bg-immich-primary/10 px-3 py-1 text-sm dark:bg-immich-dark-primary/20"
+            >
+              <img
+                src={`/api/faces/${anchorFaceId}/thumbnail?v=2`}
+                alt=""
+                loading="lazy"
+                class="h-6 w-6 rounded-full object-cover"
+              />
+              <span>Sorted by similarity</span>
+              <button
+                type="button"
+                class="cursor-pointer text-immich-primary underline dark:text-immich-dark-primary"
+                onclick={() => setAnchorFace(null)}
+              >
+                Reset
+              </button>
+            </div>
+          {/if}
         </div>
         <div class="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11">
           {#each visibleFaces as face (face.id)}
-            <a
-              href={`/people/${person.id}/photos/${face.assetId}?${QueryParameter.VIEW}=faces`}
-              class="block aspect-square overflow-hidden rounded bg-gray-200 dark:bg-gray-800"
-              title={person.name}
-            >
-              <img
-                src={`/api/faces/${face.id}/thumbnail?v=2`}
-                alt={person.name || ''}
-                loading="lazy"
-                class="h-full w-full object-cover"
-                onerror={(e) => {
-                  const img = e.currentTarget as HTMLImageElement;
-                  if (!img.dataset.retried) {
-                    img.dataset.retried = '1';
-                    img.src = `/api/faces/${face.id}/thumbnail?v=2&r=${Date.now()}`;
-                  }
-                }}
-              />
-            </a>
+            <div class="group relative">
+              <a
+                href={`/people/${person.id}/photos/${face.assetId}?${QueryParameter.VIEW}=faces${anchorFaceId ? `&${QueryParameter.ANCHOR}=${anchorFaceId}` : ''}`}
+                class="block aspect-square overflow-hidden rounded bg-gray-200 dark:bg-gray-800 {face.id ===
+                anchorFaceId
+                  ? 'outline outline-2 outline-offset-2 outline-immich-primary dark:outline-immich-dark-primary'
+                  : ''}"
+                title={person.name}
+              >
+                <img
+                  src={`/api/faces/${face.id}/thumbnail?v=2`}
+                  alt={person.name || ''}
+                  loading="lazy"
+                  class="h-full w-full object-cover"
+                  onerror={(e) => {
+                    const img = e.currentTarget as HTMLImageElement;
+                    if (!img.dataset.retried) {
+                      img.dataset.retried = '1';
+                      img.src = `/api/faces/${face.id}/thumbnail?v=2&r=${Date.now()}`;
+                    }
+                  }}
+                />
+              </a>
+              {#if face.id !== anchorFaceId}
+                <button
+                  type="button"
+                  class="absolute top-1 left-1 hidden h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/30 opacity-0 transition-opacity hover:bg-black/50 focus:bg-black/50 focus:opacity-100 focus:outline-none group-hover:flex group-hover:opacity-100"
+                  aria-label="Find similar within this person"
+                  title="Find similar"
+                  onclick={() => void setAnchorFace(face.id)}
+                >
+                  <svg viewBox="0 0 24 24" class="h-5 w-5" aria-hidden="true">
+                    <path d={mdiMagnify} fill="white" stroke="black" stroke-width="0.6" />
+                  </svg>
+                </button>
+              {/if}
+              {#if anchorFaceId && face.distance !== undefined}
+                <span
+                  class="absolute right-1 bottom-1 rounded bg-black/60 px-1 text-[10px] text-white tabular-nums"
+                  title="Cosine distance from anchor"
+                >
+                  {face.distance.toFixed(3)}
+                </span>
+              {/if}
+            </div>
           {/each}
         </div>
       {/if}

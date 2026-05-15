@@ -175,8 +175,34 @@ export class PersonService extends BaseService {
   async getFacesForPerson(
     auth: AuthDto,
     personId: string,
-  ): Promise<Array<{ id: string; assetId: string; blurScore: number | null }>> {
+    anchorFaceId?: string,
+  ): Promise<Array<{ id: string; assetId: string; blurScore: number | null; distance?: number }>> {
     await this.requireAccess({ auth, permission: Permission.PersonRead, ids: [personId] });
+
+    if (anchorFaceId) {
+      // Sort the person's faces by cosine distance from the chosen anchor face,
+      // so the user can spot misattributions (faces farthest in embedding space
+      // are the most likely wrong assignments).
+      const anchor = await this.personRepository.getFaceById(anchorFaceId);
+      if (anchor.personId !== personId) {
+        throw new BadRequestException('Anchor face is not assigned to this person');
+      }
+      const embedding = await this.personRepository.getFaceEmbedding(anchorFaceId);
+      if (!embedding) {
+        // No embedding (e.g. EXIF-imported face without ML run) — fall back to
+        // the default chronological order rather than failing the request.
+        const rows = await this.personRepository.getFacesByPersonId(personId);
+        return rows.map((row) => ({ id: row.id, assetId: row.assetId, blurScore: row.blurScore }));
+      }
+      const rows = await this.personRepository.getFacesByPersonIdSortedByDistance(personId, embedding);
+      return rows.map((row) => ({
+        id: row.id,
+        assetId: row.assetId,
+        blurScore: row.blurScore,
+        distance: row.distance,
+      }));
+    }
+
     const rows = await this.personRepository.getFacesByPersonId(personId);
     return rows.map((row) => ({ id: row.id, assetId: row.assetId, blurScore: row.blurScore }));
   }
