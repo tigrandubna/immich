@@ -58,9 +58,12 @@
     mdiFaceMan,
     mdiImageMultiple,
     mdiMagnify,
+    mdiOpenInNew,
     mdiShareVariantOutline,
   } from '@mdi/js';
   import { DateTime } from 'luxon';
+  import { SvelteSet } from 'svelte/reactivity';
+  import SearchPeople from '$lib/components/faces-page/PeopleSearch.svelte';
   import { onMount } from 'svelte';
   import { t } from 'svelte-i18n';
   import type { PageData } from './$types';
@@ -149,6 +152,100 @@
       void loadFaceList();
     }
   });
+
+  // ----- brush-select state for face-only grid -----
+  // The user clicks a face to start "brushing" — every face the cursor then
+  // moves over is added to the selection. A second click ends the brush
+  // (selection persists until acted on or cancelled). The active toolbar lets
+  // them move all selected faces to another person, or strip the assignment.
+  const selectedFaceIds = $state(new SvelteSet<string>());
+  let brushActive = $state(false);
+  let movePanelOpen = $state(false);
+  let moveSearchName = $state('');
+  let moveSearchedPeople = $state<PersonResponseDto[]>([]);
+  let moveProcessing = $state(false);
+
+  const handleFaceClick = (event: MouseEvent, faceId: string) => {
+    event.preventDefault();
+    selectedFaceIds.add(faceId);
+    // Toggle brush. First click starts; second click ends. Selection persists.
+    brushActive = !brushActive;
+  };
+  const handleFacePointerEnter = (faceId: string) => {
+    if (brushActive) {
+      selectedFaceIds.add(faceId);
+    }
+  };
+  const clearSelection = () => {
+    selectedFaceIds.clear();
+    brushActive = false;
+    movePanelOpen = false;
+    moveSearchName = '';
+    moveSearchedPeople = [];
+  };
+  // After any bulk reassignment / unassignment, the API has changed personId on
+  // these faces, so they may no longer belong to this person — drop them from
+  // the local list and re-fetch the canonical state from the server.
+  const refreshAfterBulkAction = async () => {
+    clearSelection();
+    faceList = [];
+    await loadFaceList();
+  };
+  const handleMoveToPerson = async (target: PersonResponseDto) => {
+    if (selectedFaceIds.size === 0 || moveProcessing) {
+      return;
+    }
+    moveProcessing = true;
+    try {
+      // PUT /api/faces/:personId  body { id: <faceId> } — reassign one face
+      // at a time. The server clears excludedPersonId on every non-null
+      // assignment, so previous unassign-exclusions are dropped automatically.
+      await Promise.all(
+        [...selectedFaceIds].map((faceId) =>
+          fetch(`/api/faces/${target.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: faceId }),
+          }).then((response) => {
+            if (!response.ok) {
+              throw new Error(`Failed to reassign face ${faceId}: ${response.status}`);
+            }
+          }),
+        ),
+      );
+      toastManager.primary($t('people_edits_count', { values: { count: selectedFaceIds.size } }));
+      await updateAssetCount();
+      await refreshAfterBulkAction();
+    } catch (error) {
+      handleError(error, $t('errors.cant_apply_changes'));
+    } finally {
+      moveProcessing = false;
+    }
+  };
+  const handleUnassignSelected = async () => {
+    if (selectedFaceIds.size === 0 || moveProcessing) {
+      return;
+    }
+    moveProcessing = true;
+    try {
+      await Promise.all(
+        [...selectedFaceIds].map((faceId) =>
+          fetch(`/api/faces/${faceId}/person`, { method: 'DELETE' }).then((response) => {
+            if (!response.ok) {
+              throw new Error(`Failed to unassign face ${faceId}: ${response.status}`);
+            }
+          }),
+        ),
+      );
+      toastManager.primary($t('people_edits_count', { values: { count: selectedFaceIds.size } }));
+      await updateAssetCount();
+      await refreshAfterBulkAction();
+    } catch (error) {
+      handleError(error, $t('errors.cant_apply_changes'));
+    } finally {
+      moveProcessing = false;
+    }
+  };
 
   // Set / clear the anchor=<faceId> query param. Uses replaceState so the user
   // can navigate back out of anchor mode with browser back; preserves view=faces.
@@ -642,22 +739,32 @@
             </div>
           {/if}
         </div>
-        <div class="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11">
+        <div
+          class="grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9 xl:grid-cols-11 {brushActive
+            ? 'cursor-crosshair'
+            : ''}"
+        >
           {#each visibleFaces as face (face.id)}
+            {@const isSelected = selectedFaceIds.has(face.id)}
             <div class="group relative">
-              <a
-                href={`/people/${person.id}/photos/${face.assetId}?${QueryParameter.VIEW}=faces${anchorFaceId ? `&${QueryParameter.ANCHOR}=${anchorFaceId}` : ''}`}
-                class="block aspect-square overflow-hidden rounded bg-gray-200 dark:bg-gray-800 {face.id ===
+              <button
+                type="button"
+                class="block aspect-square w-full overflow-hidden rounded bg-gray-200 dark:bg-gray-800 {face.id ===
                 anchorFaceId
                   ? 'outline outline-2 outline-offset-2 outline-immich-primary dark:outline-immich-dark-primary'
+                  : ''} {isSelected
+                  ? 'outline outline-3 outline-offset-2 outline-blue-500'
                   : ''}"
                 title={person.name}
+                onclick={(event) => handleFaceClick(event, face.id)}
+                onpointerenter={() => handleFacePointerEnter(face.id)}
               >
                 <img
                   src={`/api/faces/${face.id}/thumbnail?v=2`}
                   alt={person.name || ''}
                   loading="lazy"
-                  class="h-full w-full object-cover"
+                  draggable="false"
+                  class="pointer-events-none h-full w-full object-cover {isSelected ? 'opacity-70' : ''}"
                   onerror={(e) => {
                     const img = e.currentTarget as HTMLImageElement;
                     if (!img.dataset.retried) {
@@ -666,6 +773,27 @@
                     }
                   }}
                 />
+                {#if isSelected}
+                  <span
+                    class="pointer-events-none absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-blue-500 text-white shadow"
+                    aria-hidden="true"
+                  >
+                    <svg viewBox="0 0 24 24" class="h-4 w-4">
+                      <path d="M20 6L9 17l-5-5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </span>
+                {/if}
+              </button>
+              <a
+                href={`/people/${person.id}/photos/${face.assetId}?${QueryParameter.VIEW}=faces${anchorFaceId ? `&${QueryParameter.ANCHOR}=${anchorFaceId}` : ''}`}
+                class="absolute right-1 bottom-1 hidden h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/30 opacity-0 transition-opacity hover:bg-black/50 focus:bg-black/50 focus:opacity-100 focus:outline-none group-hover:flex group-hover:opacity-100"
+                aria-label={$t('view')}
+                title={$t('view')}
+                onclick={(event) => event.stopPropagation()}
+              >
+                <svg viewBox="0 0 24 24" class="h-5 w-5" aria-hidden="true">
+                  <path d={mdiOpenInNew} fill="white" stroke="black" stroke-width="0.6" />
+                </svg>
               </a>
               {#if face.id !== anchorFaceId}
                 <button
@@ -673,7 +801,10 @@
                   class="absolute top-1 left-1 hidden h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/30 opacity-0 transition-opacity hover:bg-black/50 focus:bg-black/50 focus:opacity-100 focus:outline-none group-hover:flex group-hover:opacity-100"
                   aria-label="Find similar within this person"
                   title="Find similar"
-                  onclick={() => void setAnchorFace(face.id)}
+                  onclick={(event) => {
+                    event.stopPropagation();
+                    void setAnchorFace(face.id);
+                  }}
                 >
                   <svg viewBox="0 0 24 24" class="h-5 w-5" aria-hidden="true">
                     <path d={mdiMagnify} fill="white" stroke="black" stroke-width="0.6" />
@@ -682,7 +813,10 @@
               {/if}
               {#if anchorFaceId && face.distance !== undefined}
                 <span
-                  class="absolute right-1 bottom-1 rounded bg-black/60 px-1 text-[10px] text-white tabular-nums"
+                  class="pointer-events-none absolute right-1 bottom-1 rounded bg-black/60 px-1 text-[10px] text-white tabular-nums {selectedFaceIds.size >
+                  0
+                    ? 'opacity-0'
+                    : ''}"
                   title="Cosine distance from anchor"
                 >
                   {face.distance.toFixed(3)}
@@ -693,6 +827,90 @@
         </div>
       {/if}
     </div>
+
+    {#if showFaceThumbnails && !isAssetViewerOpen && selectedFaceIds.size > 0}
+      <!--
+        Bulk-action bar pinned to the bottom of the viewport while at least
+        one face is selected. Shows a "Move to..." picker (existing
+        SearchPeople component) and a "Make unassigned" button that calls
+        the unassign endpoint per-face. "Cancel" clears the selection.
+      -->
+      <div
+        class="fixed inset-x-0 bottom-0 z-30 border-t border-gray-300 bg-white p-3 shadow-lg dark:border-immich-dark-gray dark:bg-immich-dark-bg"
+      >
+        <div class="mx-auto flex max-w-5xl flex-col gap-3 sm:flex-row sm:items-center">
+          <div class="flex items-center gap-2 text-sm">
+            <span class="font-medium">{selectedFaceIds.size}</span>
+            <span class="text-gray-600 dark:text-gray-300">{$t('faces_selected') || 'selected'}</span>
+            {#if brushActive}
+              <span class="rounded-full bg-blue-500/20 px-2 py-0.5 text-xs text-blue-700 dark:text-blue-300">
+                {$t('brush_active') || 'brush on'}
+              </span>
+            {/if}
+          </div>
+          {#if movePanelOpen}
+            <div class="min-w-0 flex-1">
+              <SearchPeople
+                type="searchBar"
+                placeholder={$t('move_to_person') || 'Move to person…'}
+                bind:searchName={moveSearchName}
+                bind:searchedPeopleLocal={moveSearchedPeople}
+              />
+            </div>
+            {#if moveSearchName && moveSearchedPeople.length > 0}
+              <div
+                class="flex max-h-40 min-w-0 flex-1 flex-wrap gap-2 overflow-y-auto rounded border border-gray-200 p-2 dark:border-immich-dark-gray"
+              >
+                {#each moveSearchedPeople as candidate (candidate.id)}
+                  <button
+                    type="button"
+                    class="flex items-center gap-2 rounded bg-gray-100 px-2 py-1 text-sm hover:bg-gray-200 disabled:opacity-50 dark:bg-immich-dark-gray dark:hover:bg-gray-700"
+                    disabled={moveProcessing || candidate.id === person.id}
+                    onclick={() => void handleMoveToPerson(candidate)}
+                  >
+                    <img
+                      src={getPeopleThumbnailUrl(candidate)}
+                      alt=""
+                      class="h-6 w-6 rounded-full object-cover"
+                    />
+                    <span>{candidate.name || $t('add_a_name')}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          {/if}
+          <div class="ms-auto flex items-center gap-2">
+            {#if !movePanelOpen}
+              <button
+                type="button"
+                class="cursor-pointer rounded bg-immich-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-immich-primary/90 disabled:opacity-50 dark:bg-immich-dark-primary dark:text-immich-dark-bg"
+                disabled={moveProcessing}
+                onclick={() => (movePanelOpen = true)}
+              >
+                {$t('move_to_person') || 'Move to…'}
+              </button>
+            {/if}
+            <button
+              type="button"
+              class="cursor-pointer rounded border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-immich-dark-gray dark:hover:bg-immich-dark-gray"
+              disabled={moveProcessing}
+              onclick={() => void handleUnassignSelected()}
+            >
+              {$t('make_unassigned') || 'Make unassigned'}
+            </button>
+            <button
+              type="button"
+              class="cursor-pointer rounded px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-immich-dark-gray"
+              disabled={moveProcessing}
+              onclick={clearSelection}
+            >
+              {$t('cancel')}
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
     <div class="h-full" class:hidden={showFaceThumbnails && !isAssetViewerOpen}>
     <Timeline
       enableRouting={true}
