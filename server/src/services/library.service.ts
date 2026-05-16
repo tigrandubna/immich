@@ -421,6 +421,20 @@ export class LibraryService extends BaseService {
   async queuePostSyncJobs(assetIds: string[]) {
     this.logger.debug(`Queuing sidecar discovery for ${assetIds.length} asset(s)`);
 
+    // The file on disk just changed. Drop all existing faces on these assets so
+    // the upcoming detection pipeline rebuilds them from scratch, instead of
+    // the IoU-smart update in handleDetectFaces only refreshing embeddings
+    // while leaving stale bboxes, stale thumbnail crops, and any EXIF face
+    // rows that are now misaligned with the new image content.
+    //
+    // The deletion cascades to face_search via FK, so embeddings go with the
+    // rows. EXIF faces will be recreated by handleMetadataFaces (XMP regions
+    // re-imported), ML faces by handleDetectFaces — both run as part of the
+    // chain kicked off by `source: 'upload'` below. FaceGenerateThumbnail
+    // enqueues for every new face in the fork, so the per-face crops in the
+    // "face thumbnails" view also regenerate.
+    await Promise.all(assetIds.map((id) => this.personRepository.deleteAllFacesForAsset(id)));
+
     // We queue a sidecar discovery which, in turn, queues metadata extraction
     await this.jobRepository.queueAll(
       assetIds.map((assetId) => ({
