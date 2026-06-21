@@ -202,6 +202,40 @@ export class AutoTripRepository {
   }
 
   /**
+   * For each given English city name, find a Russian / Cyrillic-script
+   * alternate from GeoNames `alternateNames`. Returns a Map keyed by the
+   * exact English name; cities with no Cyrillic alternate are simply absent
+   * from the result and the caller can fall back to the English form.
+   *
+   * Match is by name only (no country filter) — same-name collisions are
+   * unlikely for the cities a user actually photographs, and the first
+   * Cyrillic alternate is usually the canonical Russian name across rows.
+   */
+  async getRussianCityNames(englishNames: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (englishNames.length === 0) {
+      return out;
+    }
+    const rows = await this.db
+      .selectFrom('geodata_places')
+      .select(['name', 'alternateNames'])
+      .where('name', 'in', englishNames)
+      .where('alternateNames', 'is not', null)
+      .execute();
+    for (const row of rows) {
+      if (out.has(row.name)) {
+        continue; // already have one, prefer first hit
+      }
+      const alternates = (row.alternateNames ?? '').split(',');
+      const cyrillic = alternates.find((s) => /[Ѐ-ӿ]/.test(s));
+      if (cyrillic) {
+        out.set(row.name, cyrillic.trim());
+      }
+    }
+    return out;
+  }
+
+  /**
    * Soft-delete every album whose description starts with the auto-created
    * marker. Called at the top of the job so prototype re-runs cleanly
    * replace the previous batch instead of stacking duplicates.

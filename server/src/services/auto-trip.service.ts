@@ -58,6 +58,58 @@ const MONTHS_RU_GEN = [
 
 type TripKind = 'multi-day' | 'one-day';
 
+// English country names (as immich's reverse geocoder stores them in
+// asset_exif.country) → preferred Russian rendering. Common short forms; for
+// countries not in the table the title falls back to the English original.
+const COUNTRIES_RU: Record<string, string> = {
+  'Armenia': 'Армения',
+  'Azerbaijan': 'Азербайджан',
+  'Belarus': 'Беларусь',
+  'China': 'Китай',
+  "People's Republic of China": 'Китай',
+  'Czech Republic': 'Чехия',
+  'Czechia': 'Чехия',
+  'Egypt': 'Египет',
+  'France': 'Франция',
+  'Georgia': 'Грузия',
+  'Germany': 'Германия',
+  'Greece': 'Греция',
+  'India': 'Индия',
+  'Indonesia': 'Индонезия',
+  'Iran': 'Иран',
+  'Israel': 'Израиль',
+  'Italy': 'Италия',
+  'Japan': 'Япония',
+  'Kazakhstan': 'Казахстан',
+  'Kyrgyzstan': 'Киргизия',
+  'Maldives': 'Мальдивы',
+  'Mexico': 'Мексика',
+  'Morocco': 'Марокко',
+  'Netherlands': 'Нидерланды',
+  'Norway': 'Норвегия',
+  'Oman': 'Оман',
+  'Poland': 'Польша',
+  'Portugal': 'Португалия',
+  'Russian Federation': 'Россия',
+  'Russia': 'Россия',
+  'Saudi Arabia': 'Саудовская Аравия',
+  'Serbia': 'Сербия',
+  'Spain': 'Испания',
+  'Sri Lanka': 'Шри-Ланка',
+  'Sweden': 'Швеция',
+  'Switzerland': 'Швейцария',
+  'Thailand': 'Таиланд',
+  'Turkey': 'Турция',
+  'Türkiye': 'Турция',
+  'Ukraine': 'Украина',
+  'United Arab Emirates': 'ОАЭ',
+  'United Kingdom': 'Великобритания',
+  'United States': 'США',
+  'United States of America': 'США',
+  'Uzbekistan': 'Узбекистан',
+  'Vietnam': 'Вьетнам',
+};
+
 @Injectable()
 export class AutoTripService extends BaseService {
   /**
@@ -120,6 +172,18 @@ export class AutoTripService extends BaseService {
 
     const clusters = this.findAwayClusters(gpsAssets, home);
 
+    // Pre-load Russian alternates for every distinct city that appears in any
+    // cluster so titleForTrip can just look them up. One DB hit per user.
+    const distinctCities = new Set<string>();
+    for (const cluster of clusters) {
+      for (const a of cluster) {
+        if (a.city) {
+          distinctCities.add(a.city);
+        }
+      }
+    }
+    const cityRu = await this.autoTripRepository.getRussianCityNames([...distinctCities]);
+
     // Walk newest → oldest. classifyCluster gates on rough size; createTripAlbum
     // does the real work (screenshot drop + burst dedup) and can still bail at
     // the end if the post-filter album turns out too small for a memorable
@@ -139,7 +203,7 @@ export class AutoTripService extends BaseService {
         continue;
       }
       classified++;
-      const ok = await this.createTripAlbum(userId, cluster, kind);
+      const ok = await this.createTripAlbum(userId, cluster, kind, cityRu);
       if (ok) {
         created++;
         if (kind === 'multi-day') {
@@ -272,7 +336,12 @@ export class AutoTripService extends BaseService {
     return clusters;
   }
 
-  private async createTripAlbum(userId: string, trip: GpsAssetRow[], kind: TripKind): Promise<boolean> {
+  private async createTripAlbum(
+    userId: string,
+    trip: GpsAssetRow[],
+    kind: TripKind,
+    cityRu: Map<string, string>,
+  ): Promise<boolean> {
     // trip is sorted desc; convert to chronological order for clearer logging
     const tripEnd = trip[0].fileCreatedAt;
     const tripStart = trip[trip.length - 1].fileCreatedAt;
@@ -407,7 +476,7 @@ export class AutoTripService extends BaseService {
       return false;
     }
 
-    const albumName = this.titleForTrip(trip, tripStart, kind);
+    const albumName = this.titleForTrip(trip, tripStart, kind, cityRu);
     const description =
       `${AUTO_DESCRIPTION_PREFIX} ${kind} · ${tripStart.toISOString().slice(0, 10)} – ${tripEnd.toISOString().slice(0, 10)} · ` +
       `${trip.length} geo-tagged · ${kept.length} kept (dropped ${droppedByBridge} off-trip + ${droppedByBurst} burst-duplicates)`;
@@ -491,7 +560,12 @@ export class AutoTripService extends BaseService {
     return groups;
   }
 
-  private titleForTrip(trip: GpsAssetRow[], startDate: Date, kind: TripKind): string {
+  private titleForTrip(
+    trip: GpsAssetRow[],
+    startDate: Date,
+    kind: TripKind,
+    cityRu: Map<string, string>,
+  ): string {
     const cityCounts = new Map<string, number>();
     const countryCounts = new Map<string, number>();
     for (const asset of trip) {
@@ -502,8 +576,14 @@ export class AutoTripService extends BaseService {
         countryCounts.set(asset.country, (countryCounts.get(asset.country) ?? 0) + 1);
       }
     }
-    const dominantCity = topKey(cityCounts);
-    const dominantCountry = topKey(countryCounts);
+    const dominantCityEn = topKey(cityCounts);
+    const dominantCountryEn = topKey(countryCounts);
+    // Translate to Russian when we have a hit; otherwise leave the original
+    // (less ugly than dropping the field).
+    const dominantCity = dominantCityEn ? (cityRu.get(dominantCityEn) ?? dominantCityEn) : undefined;
+    const dominantCountry = dominantCountryEn
+      ? (COUNTRIES_RU[dominantCountryEn] ?? dominantCountryEn)
+      : undefined;
     // Multi-day → "Month Year". One-day → "DD month Year" so multiple
     // day-trips to the same place in the same month don't collide.
     const datePart =
