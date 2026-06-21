@@ -24,6 +24,12 @@ const AESTHETIC_MODEL_NAME = 'cafe-aesthetic'; // hosted under /cache/aesthetic/
 const AESTHETIC_WEIGHT = 0.6; // final = AESTHETIC_WEIGHT * aesthetic + (1-AESTHETIC_WEIGHT) * normalised blur (per-burst max=1)
 const MAX_TRIPS_PER_USER = 1000; // safety cap; in practice we run out of clusters first on any real library
 const AUTO_DESCRIPTION_PREFIX = 'Auto-detected trip ·';
+// Embedded watermark inside album descriptions so we can run the detector
+// incrementally: assets uploaded BEFORE this timestamp are assumed to be
+// already-considered (so a user-deleted asset doesn't get re-added on the
+// next run). Format: "[scan:2026-06-21T03:00:00.000Z]" appended to the
+// description.
+const SCAN_WATERMARK_RE = /\[scan:([^\]]+)\]/;
 
 const MONTHS_RU = [
   'Январь',
@@ -157,17 +163,6 @@ export class AutoTripService extends BaseService {
   }
 
   private async processUser(userId: string): Promise<number> {
-    // Wipe out the previous prototype run's albums for this user so re-runs
-    // replace rather than stack. Identified by the description prefix the
-    // service stamps on every album it creates.
-    const deleted = await this.autoTripRepository.deleteAutoCreatedAlbumsForUser(
-      userId,
-      AUTO_DESCRIPTION_PREFIX,
-    );
-    if (deleted.length > 0) {
-      this.logger.log(`User ${userId}: removed ${deleted.length} previously auto-created trip album(s)`);
-    }
-
     const gpsAssets = await this.autoTripRepository.getGpsAssetsForUser(userId);
     if (gpsAssets.length === 0) {
       return 0;
@@ -196,12 +191,29 @@ export class AutoTripService extends BaseService {
     }
     const cityRu = await this.autoTripRepository.getRussianCityNames([...distinctCities]);
 
+    // Load every existing auto-trip album. Each cluster will be matched
+    // against one of these by date-range overlap; if matched, we add only
+    // newly-uploaded assets instead of recreating the album. If no match,
+    // we fall through to creating a new album. Once an album has been
+    // matched once in this run, it's removed from the pool so two
+    // overlapping clusters can't both glom onto the same album.
+    const existingAlbums = await this.autoTripRepository.getAutoTripAlbumsForUser(
+      userId,
+      AUTO_DESCRIPTION_PREFIX,
+    );
+    const albumPool = existingAlbums.map((album) => {
+      const range = parseAlbumDateRange(album.description);
+      const watermark = parseWatermark(album.description) ?? album.createdAt;
+      return { ...album, range, watermark };
+    });
+
     // Walk newest → oldest. classifyCluster gates on rough size; createTripAlbum
     // does the real work (screenshot drop + burst dedup) and can still bail at
     // the end if the post-filter album turns out too small for a memorable
-    // trip. Keep going past failed candidates until we have MAX_TRIPS_PER_USER
-    // accepted albums or run out of clusters.
+    // trip.
     let created = 0;
+    let merged = 0;
+    let assetsAddedTotal = 0;
     let multiKept = 0;
     let oneDayKept = 0;
     let classified = 0;
@@ -215,6 +227,25 @@ export class AutoTripService extends BaseService {
         continue;
       }
       classified++;
+
+      // cluster is sorted desc; the album-range overlap check needs ascending
+      // start/end.
+      const clusterStart = cluster[cluster.length - 1].fileCreatedAt;
+      const clusterEnd = cluster[0].fileCreatedAt;
+      const matchIdx = findBestOverlappingAlbum(albumPool, clusterStart, clusterEnd);
+
+      if (matchIdx >= 0) {
+        const match = albumPool[matchIdx];
+        const addedCount = await this.mergeClusterIntoAlbum(userId, cluster, match);
+        if (addedCount > 0) {
+          merged++;
+          assetsAddedTotal += addedCount;
+        }
+        // Either way, this album is now claimed for this run.
+        albumPool.splice(matchIdx, 1);
+        continue;
+      }
+
       const ok = await this.createTripAlbum(userId, cluster, kind, cityRu);
       if (ok) {
         created++;
@@ -229,11 +260,77 @@ export class AutoTripService extends BaseService {
     }
 
     this.logger.log(
-      `User ${userId}: ${clusters.length} raw clusters, ${classified} passed initial size gate, ` +
-        `${created} ended up as albums (${multiKept} multi-day, ${oneDayKept} one-day), ` +
+      `User ${userId}: ${clusters.length} raw clusters, ${classified} passed initial size gate. ` +
+        `Created ${created} new album(s) (${multiKept} multi-day, ${oneDayKept} one-day); ` +
+        `merged into ${merged} existing album(s) adding ${assetsAddedTotal} asset(s); ` +
         `${rejectedTooSmall} skipped because final album was too thin`,
     );
-    return created;
+    return created + merged;
+  }
+
+  /**
+   * Incremental merge: an existing auto-trip album already covers (most of)
+   * this cluster's date range, so instead of recreating it we add any newly
+   * uploaded assets that weren't there before. "Newly uploaded" is defined
+   * by the album's scan watermark (asset.createdAt > watermark), which
+   * means user-deleted assets stay deleted across runs. Returns the number
+   * of assets actually added.
+   */
+  private async mergeClusterIntoAlbum(
+    userId: string,
+    cluster: GpsAssetRow[],
+    album: { id: string; albumName: string; description: string; assetIds: Set<string>; watermark: Date },
+  ): Promise<number> {
+    const tripEnd = cluster[0].fileCreatedAt;
+    const tripStart = cluster[cluster.length - 1].fileCreatedAt;
+    const from = new Date(tripStart.getTime() - TIME_PAD_HOURS * 60 * 60 * 1000);
+    const to = new Date(tripEnd.getTime() + TIME_PAD_HOURS * 60 * 60 * 1000);
+
+    // Run the same bridge filter we use for new albums (no burst dedup —
+    // the album already has its dedup'd set, and we want to add new
+    // uploads even if they form a burst with existing photos).
+    const candidates = await this.autoTripRepository.getAssetsInRangeForUser(userId, from, to);
+    const gpsTimes = cluster.map((a) => a.fileCreatedAt.getTime()).sort((a, b) => a - b);
+    const bridged = candidates.filter((asset) => {
+      if (asset.hasGps) {
+        return true;
+      }
+      const nearestDelta = nearestDeltaMs(asset.fileCreatedAt.getTime(), gpsTimes);
+      return nearestDelta <= NONGPS_BRIDGE_HOURS * 60 * 60 * 1000;
+    });
+
+    // Drop anything already in the album, then keep only assets uploaded
+    // AFTER the album's last scan — that's the user-deletion guard.
+    const candidateIds = bridged.filter((a) => !album.assetIds.has(a.id)).map((a) => a.id);
+    if (candidateIds.length === 0) {
+      // Still bump the watermark so we don't reconsider the same window forever.
+      await this.autoTripRepository.updateAlbumDescription(
+        album.id,
+        replaceWatermark(album.description, new Date()),
+      );
+      return 0;
+    }
+    const createdAtMap = await this.autoTripRepository.getAssetCreatedAtMap(candidateIds);
+    const toAdd: string[] = [];
+    for (const id of candidateIds) {
+      const createdAt = createdAtMap.get(id);
+      if (createdAt && createdAt.getTime() > album.watermark.getTime()) {
+        toAdd.push(id);
+      }
+    }
+
+    if (toAdd.length > 0) {
+      await this.albumRepository.addAssetIds(album.id, toAdd);
+      this.logger.log(
+        `Merged ${toAdd.length} new asset(s) into existing album "${album.albumName}" ` +
+          `(user ${userId}, trip ${tripStart.toISOString().slice(0, 10)}..${tripEnd.toISOString().slice(0, 10)})`,
+      );
+    }
+    await this.autoTripRepository.updateAlbumDescription(
+      album.id,
+      replaceWatermark(album.description, new Date()),
+    );
+    return toAdd.length;
   }
 
   /**
@@ -489,7 +586,8 @@ export class AutoTripService extends BaseService {
     const albumName = this.titleForTrip(trip, tripStart, kind, cityRu);
     const description =
       `${AUTO_DESCRIPTION_PREFIX} ${kind} · ${tripStart.toISOString().slice(0, 10)} – ${tripEnd.toISOString().slice(0, 10)} · ` +
-      `${trip.length} geo-tagged · ${kept.length} kept (dropped ${droppedByBridge} off-trip + ${droppedByBurst} burst-duplicates)`;
+      `${trip.length} geo-tagged · ${kept.length} kept (dropped ${droppedByBridge} off-trip + ${droppedByBurst} burst-duplicates) ` +
+      `[scan:${new Date().toISOString()}]`;
 
     // Album cover: prefer the photo with the most NAMED people on it (i.e.
     // faces already linked to a person with a non-empty name). For trips,
@@ -673,6 +771,76 @@ function nearestDeltaMs(t: number, sorted: number[]): number {
     best = Math.min(best, Math.abs(sorted[lo - 1] - t));
   }
   return best;
+}
+
+/**
+ * Parse the "YYYY-MM-DD – YYYY-MM-DD" trip range out of the auto-generated
+ * description. Returns null when the description doesn't follow the
+ * expected format (e.g. user heavily edited it).
+ */
+function parseAlbumDateRange(description: string): { start: Date; end: Date } | null {
+  const match = description.match(/(\d{4}-\d{2}-\d{2})\s+–\s+(\d{4}-\d{2}-\d{2})/);
+  if (!match) {
+    return null;
+  }
+  const start = new Date(`${match[1]}T00:00:00Z`);
+  const end = new Date(`${match[2]}T23:59:59Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return null;
+  }
+  return { start, end };
+}
+
+function parseWatermark(description: string): Date | null {
+  const match = description.match(SCAN_WATERMARK_RE);
+  if (!match) {
+    return null;
+  }
+  const d = new Date(match[1]);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Replace or append the "[scan:<iso>]" watermark in an album description
+ * without disturbing whatever else is there (user could have edited the
+ * surrounding text). If there's no marker yet, append one separated by a
+ * single space.
+ */
+function replaceWatermark(description: string, when: Date): string {
+  const stamp = `[scan:${when.toISOString()}]`;
+  if (SCAN_WATERMARK_RE.test(description)) {
+    return description.replace(SCAN_WATERMARK_RE, stamp);
+  }
+  return description.length > 0 ? `${description} ${stamp}` : stamp;
+}
+
+/**
+ * Pick the existing auto-trip album whose date range overlaps the given
+ * cluster's range the most. Returns the index in `albums` or -1 if no
+ * candidate overlaps at all. Used to decide between "merge into existing"
+ * and "create new" for each detected cluster.
+ */
+function findBestOverlappingAlbum<A extends { range: { start: Date; end: Date } | null }>(
+  albums: A[],
+  clusterStart: Date,
+  clusterEnd: Date,
+): number {
+  let bestIdx = -1;
+  let bestOverlap = 0;
+  const cs = clusterStart.getTime();
+  const ce = clusterEnd.getTime();
+  for (let i = 0; i < albums.length; i++) {
+    const range = albums[i].range;
+    if (!range) {
+      continue;
+    }
+    const overlap = Math.min(ce, range.end.getTime()) - Math.max(cs, range.start.getTime());
+    if (overlap > 0 && overlap > bestOverlap) {
+      bestOverlap = overlap;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 function topKey<K>(counts: Map<K, number>): K | undefined {

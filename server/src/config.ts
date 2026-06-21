@@ -145,6 +145,7 @@ export type SystemConfig = {
     clusterNewFaces: boolean;
     generateMemories: boolean;
     syncQuotaUsage: boolean;
+    detectTrips: boolean;
   };
   trash: {
     enabled: boolean;
@@ -357,6 +358,7 @@ export const defaults = Object.freeze<SystemConfig>({
     syncQuotaUsage: true,
     missingThumbnails: true,
     clusterNewFaces: true,
+    detectTrips: true,
   },
   trash: {
     enabled: true,

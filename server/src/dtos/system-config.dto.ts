@@ -168,6 +168,7 @@ const SystemConfigNightlyTasksSchema = z
     clusterNewFaces: configBool.describe('Cluster new faces'),
     generateMemories: configBool.describe('Generate memories'),
     syncQuotaUsage: configBool.describe('Sync quota usage'),
+    detectTrips: configBool.default(true).describe('Detect trips and create albums'),
   })
   .meta({ id: 'SystemConfigNightlyTasksDto' });
 

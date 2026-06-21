@@ -293,6 +293,10 @@ export class QueueService extends BaseService {
       jobs.push({ name: JobName.FacialRecognitionQueueAll, data: { force: false, nightly: true } });
     }
 
+    if (config.nightlyTasks.detectTrips) {
+      jobs.push({ name: JobName.AutoTripDetectRecent });
+    }
+
     await this.jobRepository.queueAll(jobs);
   }
 }

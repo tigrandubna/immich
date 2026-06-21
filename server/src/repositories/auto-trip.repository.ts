@@ -259,8 +259,8 @@ export class AutoTripRepository {
 
   /**
    * Soft-delete every album whose description starts with the auto-created
-   * marker. Called at the top of the job so prototype re-runs cleanly
-   * replace the previous batch instead of stacking duplicates.
+   * marker. Used for explicit wipe-and-rebuild (not in the default
+   * incremental nightly path).
    */
   async deleteAutoCreatedAlbumsForUser(userId: string, descriptionPrefix: string): Promise<string[]> {
     // Find albums owned by this user with the prefix marker.
@@ -277,8 +277,88 @@ export class AutoTripRepository {
       return [];
     }
     const idList = ids.map((r) => r.id);
-    // Hard-delete; this is prototype iteration data, no need to send to trash.
     await this.db.deleteFrom('album').where('album.id', 'in', idList).execute();
     return idList;
+  }
+
+  /**
+   * Auto-trip albums currently owned by `userId`, with the asset IDs
+   * already in each one. The service uses this to match newly-detected
+   * clusters against existing albums and add only new assets — preserving
+   * any manual curation (renames, manual add/remove) the user did.
+   */
+  async getAutoTripAlbumsForUser(
+    userId: string,
+    descriptionPrefix: string,
+  ): Promise<Array<{ id: string; albumName: string; description: string; createdAt: Date; assetIds: Set<string> }>> {
+    const albumRows = await this.db
+      .selectFrom('album')
+      .innerJoin('album_user', 'album_user.albumId', 'album.id')
+      .select(['album.id', 'album.albumName', 'album.description', 'album.createdAt'])
+      .where('album_user.userId', '=', userId)
+      .where('album_user.role', '=', AlbumUserRole.Owner)
+      .where('album.description', 'like', `${descriptionPrefix}%`)
+      .where('album.deletedAt', 'is', null)
+      .execute();
+    if (albumRows.length === 0) {
+      return [];
+    }
+    const ids = albumRows.map((r) => r.id);
+    const assetRows = await this.db
+      .selectFrom('album_asset')
+      .select(['album_asset.albumId', 'album_asset.assetId'])
+      .where('album_asset.albumId', 'in', ids)
+      .execute();
+    const byAlbum = new Map<string, Set<string>>();
+    for (const r of assetRows) {
+      let set = byAlbum.get(r.albumId);
+      if (!set) {
+        set = new Set();
+        byAlbum.set(r.albumId, set);
+      }
+      set.add(r.assetId);
+    }
+    return albumRows.map((r) => ({
+      id: r.id,
+      albumName: r.albumName,
+      description: r.description ?? '',
+      createdAt: r.createdAt,
+      assetIds: byAlbum.get(r.id) ?? new Set(),
+    }));
+  }
+
+  /**
+   * Asset `createdAt` for the given asset IDs — used by the incremental
+   * merge step to skip assets the user explicitly removed from an album.
+   * A removed asset will keep showing up in the detected cluster, but its
+   * createdAt sits BEFORE the album's scan watermark, so the watermark
+   * filter drops it instead of re-adding it.
+   */
+  async getAssetCreatedAtMap(assetIds: string[]): Promise<Map<string, Date>> {
+    if (assetIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.db
+      .selectFrom('asset')
+      .select(['asset.id', 'asset.createdAt'])
+      .where('asset.id', 'in', assetIds)
+      .execute();
+    const out = new Map<string, Date>();
+    for (const r of rows) {
+      out.set(r.id, r.createdAt);
+    }
+    return out;
+  }
+
+  /**
+   * Update only the `description` field of an album. Used to refresh the
+   * embedded "[scan:<iso>]" watermark after an incremental merge.
+   */
+  async updateAlbumDescription(albumId: string, description: string): Promise<void> {
+    await this.db
+      .updateTable('album')
+      .set({ description })
+      .where('album.id', '=', albumId)
+      .execute();
   }
 }
