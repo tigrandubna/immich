@@ -18,7 +18,7 @@ const BURST_KEEP = 3; // keep up to this many sharpest shots per burst
 const BURST_BLUR_CONCURRENCY = 8; // how many preview-blur measurements to run in parallel
 const AESTHETIC_MODEL_NAME = 'cafe-aesthetic'; // hosted under /cache/aesthetic/<name>/scorer/model.onnx
 const AESTHETIC_WEIGHT = 0.6; // final = AESTHETIC_WEIGHT * aesthetic + (1-AESTHETIC_WEIGHT) * normalised blur (per-burst max=1)
-const MAX_TRIPS_PER_USER = 5; // prototype: only build albums for the N most recent trips per user
+const MAX_TRIPS_PER_USER = 30; // prototype: only build albums for the N most recent trips per user
 const AUTO_DESCRIPTION_PREFIX = 'Auto-detected trip ·';
 
 const MONTHS_RU = [
