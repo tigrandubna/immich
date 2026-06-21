@@ -11,8 +11,12 @@ const AWAY_THRESHOLD_KM = 100; // a single GPS sample at least this far from hom
 const MAX_TRIP_GAP_HOURS = 72; // two consecutive away assets more than this apart split into separate trips
 const MIN_TRIP_ASSETS = 5; // ignore clusters smaller than this — usually one-off layovers
 const MIN_TRIP_DURATION_HOURS = 18; // and clusters shorter than this in time — same reason
-const TIME_PAD_HOURS = 24; // extend trip range by ±1 day to sweep up GPS-less photos at the edges
+const TIME_PAD_HOURS = 2; // small pre/post window around the trip's GPS range
+const NONGPS_BRIDGE_HOURS = 4; // a GPS-less asset is included only if a GPS asset of the trip is within this much
+const BURST_WINDOW_SECONDS = 5; // adjacent assets closer than this from the same camera count as a burst
+const BURST_KEEP = 1; // …and we keep only this many (the sharpest) per burst
 const MAX_TRIPS_PER_USER = 5; // prototype: only build albums for the N most recent trips per user
+const AUTO_DESCRIPTION_PREFIX = 'Auto-detected trip ·';
 
 const MONTHS_RU = [
   'Январь',
@@ -64,6 +68,17 @@ export class AutoTripService extends BaseService {
   }
 
   private async processUser(userId: string): Promise<number> {
+    // Wipe out the previous prototype run's albums for this user so re-runs
+    // replace rather than stack. Identified by the description prefix the
+    // service stamps on every album it creates.
+    const deleted = await this.autoTripRepository.deleteAutoCreatedAlbumsForUser(
+      userId,
+      AUTO_DESCRIPTION_PREFIX,
+    );
+    if (deleted.length > 0) {
+      this.logger.log(`User ${userId}: removed ${deleted.length} previously auto-created trip album(s)`);
+    }
+
     const gpsAssets = await this.autoTripRepository.getGpsAssetsForUser(userId);
     if (gpsAssets.length === 0) {
       return 0;
@@ -168,21 +183,77 @@ export class AutoTripService extends BaseService {
     // trip is sorted desc; convert to chronological order for clearer logging
     const tripEnd = trip[0].fileCreatedAt;
     const tripStart = trip[trip.length - 1].fileCreatedAt;
+    // Small pre/post window; the bridge filter below trims it tighter per-asset.
     const from = new Date(tripStart.getTime() - TIME_PAD_HOURS * 60 * 60 * 1000);
     const to = new Date(tripEnd.getTime() + TIME_PAD_HOURS * 60 * 60 * 1000);
 
-    const assetIds = await this.autoTripRepository.getAssetsInRangeForUser(userId, from, to);
-    if (assetIds.length === 0) {
+    const candidates = await this.autoTripRepository.getAssetsInRangeForUser(userId, from, to);
+    if (candidates.length === 0) {
       this.logger.warn(
         `Skipping trip ${tripStart.toISOString()}..${tripEnd.toISOString()} for user ${userId}: time range query returned 0 assets`,
       );
       return false;
     }
 
+    // Sorted ascending GPS timestamps for the nearest-GPS bridge filter.
+    const gpsTimes = trip.map((a) => a.fileCreatedAt.getTime()).sort((a, b) => a - b);
+
+    // Step 1: drop edge / orphan assets. An asset with no GPS is included only
+    // if a GPS asset of THIS trip is within ±NONGPS_BRIDGE_HOURS of it. This
+    // kills the "midnight before the trip" / "midnight after the trip" photos
+    // that the previous time-pad blindly swept in.
+    const bridged = candidates.filter((asset) => {
+      if (asset.hasGps) {
+        return true;
+      }
+      const nearestDelta = nearestDeltaMs(asset.fileCreatedAt.getTime(), gpsTimes);
+      return nearestDelta <= NONGPS_BRIDGE_HOURS * 60 * 60 * 1000;
+    });
+    const droppedByBridge = candidates.length - bridged.length;
+
+    // Step 2: burst dedup. Walk chronologically, group consecutive assets
+    // within BURST_WINDOW_SECONDS from the same camera model, keep the
+    // sharpest by face blur score (proxy for "best of duplicates"). For
+    // assets without faces, fall back to keeping the first.
+    const blurScores = await this.autoTripRepository.getMaxBlurScores(bridged.map((a) => a.id));
+    const kept: typeof bridged = [];
+    let groupStart = 0;
+    for (let i = 0; i <= bridged.length; i++) {
+      const prev = bridged[i - 1];
+      const curr = bridged[i];
+      const breakHere =
+        i === bridged.length ||
+        !prev ||
+        !curr ||
+        curr.fileCreatedAt.getTime() - prev.fileCreatedAt.getTime() > BURST_WINDOW_SECONDS * 1000 ||
+        (prev.model ?? '') !== (curr.model ?? '');
+      if (!breakHere) {
+        continue;
+      }
+      const group = bridged.slice(groupStart, i);
+      if (group.length > 0) {
+        // Sort descending by blur score (sharper first); assets with no score
+        // sink to the bottom. Keep BURST_KEEP from the top of the sort.
+        const ranked = [...group].sort(
+          (a, b) => (blurScores.get(b.id) ?? -1) - (blurScores.get(a.id) ?? -1),
+        );
+        kept.push(...ranked.slice(0, Math.max(1, group.length <= 2 ? group.length : BURST_KEEP)));
+      }
+      groupStart = i;
+    }
+    // Re-sort kept ascending (sort above scrambled within bursts)
+    kept.sort((a, b) => a.fileCreatedAt.getTime() - b.fileCreatedAt.getTime());
+    const droppedByBurst = bridged.length - kept.length;
+
+    if (kept.length === 0) {
+      this.logger.warn(`Skipping trip ${tripStart.toISOString()}..${tripEnd.toISOString()} for user ${userId}: empty after filters`);
+      return false;
+    }
+
     const albumName = this.titleForTrip(trip, tripStart);
     const description =
-      `Auto-detected trip · ${tripStart.toISOString().slice(0, 10)} – ${tripEnd.toISOString().slice(0, 10)} · ` +
-      `${trip.length} geo-tagged, ${assetIds.length} total in time range`;
+      `${AUTO_DESCRIPTION_PREFIX} ${tripStart.toISOString().slice(0, 10)} – ${tripEnd.toISOString().slice(0, 10)} · ` +
+      `${trip.length} geo-tagged · ${kept.length} kept (dropped ${droppedByBridge} off-trip + ${droppedByBurst} burst-duplicates)`;
 
     // Pick a thumbnail from somewhere in the middle of the GPS cluster — the
     // first asset by date is usually a transit shot ("at the airport"), and
@@ -191,8 +262,9 @@ export class AutoTripService extends BaseService {
     const middle = trip[Math.floor(trip.length / 2)];
 
     this.logger.log(
-      `Creating trip album "${albumName}" for user ${userId} with ${assetIds.length} assets ` +
-        `(${trip.length} GPS-tagged)`,
+      `Creating trip album "${albumName}" for user ${userId} with ${kept.length} assets ` +
+        `(GPS ${trip.length}, candidates ${candidates.length}, off-trip dropped ${droppedByBridge}, ` +
+        `burst-dups dropped ${droppedByBurst})`,
     );
 
     try {
@@ -200,9 +272,9 @@ export class AutoTripService extends BaseService {
         {
           albumName,
           description,
-          albumThumbnailAssetId: middle?.id ?? assetIds[0],
+          albumThumbnailAssetId: middle?.id ?? kept[0].id,
         },
-        assetIds,
+        kept.map((a) => a.id),
         [{ userId, role: AlbumUserRole.Owner }],
         userId,
       );
@@ -212,6 +284,8 @@ export class AutoTripService extends BaseService {
       return false;
     }
   }
+
+
 
   private titleForTrip(trip: GpsAssetRow[], startDate: Date): string {
     const cityCounts = new Map<string, number>();
@@ -256,6 +330,33 @@ function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const m = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? (sorted[m - 1] + sorted[m]) / 2 : sorted[m];
+}
+
+/**
+ * Smallest absolute time delta (ms) from `t` to any element of the SORTED
+ * ascending array `sorted`. O(log n) per call. Used to decide whether a
+ * GPS-less asset is close enough to a known trip moment to belong to it.
+ */
+function nearestDeltaMs(t: number, sorted: number[]): number {
+  if (sorted.length === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  let lo = 0;
+  let hi = sorted.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sorted[mid] < t) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  // lo is the first index >= t (or last index if all < t).
+  let best = Math.abs(sorted[lo] - t);
+  if (lo > 0) {
+    best = Math.min(best, Math.abs(sorted[lo - 1] - t));
+  }
+  return best;
 }
 
 function topKey<K>(counts: Map<K, number>): K | undefined {

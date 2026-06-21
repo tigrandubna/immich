@@ -75,15 +75,27 @@ export class AutoTripRepository {
   }
 
   /**
-   * All timeline assets (image + video, with or without GPS) for a user inside
-   * `[from, to]`. The detected trip cluster only uses GPS-tagged assets, but
-   * the resulting album sweeps the full time range so photos where iPhone
-   * forgot to record GPS still end up in the trip album.
+   * Timeline assets (image + video, with or without GPS) for a user inside
+   * `[from, to]`, with the metadata needed by post-fetch filtering: timestamp,
+   * presence of GPS, and camera model for burst-grouping.
+   *
+   * Returned in chronological ascending order so the caller can do
+   * adjacent-pair operations (burst dedup, nearest-GPS bridging) in one pass.
    */
-  async getAssetsInRangeForUser(userId: string, from: Date, to: Date): Promise<string[]> {
+  async getAssetsInRangeForUser(
+    userId: string,
+    from: Date,
+    to: Date,
+  ): Promise<Array<{ id: string; fileCreatedAt: Date; hasGps: boolean; model: string | null }>> {
     const rows = await this.db
       .selectFrom('asset')
-      .select('asset.id')
+      .leftJoin('asset_exif', 'asset_exif.assetId', 'asset.id')
+      .select([
+        'asset.id',
+        'asset.fileCreatedAt',
+        'asset_exif.latitude',
+        'asset_exif.model',
+      ])
       .where('asset.ownerId', '=', userId)
       .where('asset.visibility', '=', AssetVisibility.Timeline)
       .where('asset.deletedAt', 'is', null)
@@ -91,6 +103,62 @@ export class AutoTripRepository {
       .where('asset.fileCreatedAt', '<=', to)
       .orderBy('asset.fileCreatedAt', 'asc')
       .execute();
-    return rows.map((r) => r.id);
+    return rows.map((r) => ({
+      id: r.id,
+      fileCreatedAt: r.fileCreatedAt,
+      hasGps: r.latitude !== null,
+      model: r.model,
+    }));
+  }
+
+  /**
+   * Best blur score across all faces on the given assets (one row per assetId
+   * that has at least one face with a non-null blurScore). Higher = sharper.
+   * Used by the burst-dedup step to pick the keeper from a group of
+   * near-identical shots.
+   */
+  async getMaxBlurScores(assetIds: string[]): Promise<Map<string, number>> {
+    if (assetIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.db
+      .selectFrom('asset_face')
+      .select((eb) => ['asset_face.assetId', eb.fn.max('asset_face.blurScore').as('blur')])
+      .where('asset_face.assetId', 'in', assetIds)
+      .where('asset_face.blurScore', 'is not', null)
+      .groupBy('asset_face.assetId')
+      .execute();
+    const out = new Map<string, number>();
+    for (const r of rows) {
+      if (r.blur !== null) {
+        out.set(r.assetId, Number(r.blur));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Soft-delete every album whose description starts with the auto-created
+   * marker. Called at the top of the job so prototype re-runs cleanly
+   * replace the previous batch instead of stacking duplicates.
+   */
+  async deleteAutoCreatedAlbumsForUser(userId: string, descriptionPrefix: string): Promise<string[]> {
+    // Find albums owned by this user with the prefix marker.
+    const ids = await this.db
+      .selectFrom('album')
+      .innerJoin('album_user', 'album_user.albumId', 'album.id')
+      .select('album.id')
+      .where('album_user.userId', '=', userId)
+      .where('album_user.role', '=', 'owner')
+      .where('album.description', 'like', `${descriptionPrefix}%`)
+      .where('album.deletedAt', 'is', null)
+      .execute();
+    if (ids.length === 0) {
+      return [];
+    }
+    const idList = ids.map((r) => r.id);
+    // Hard-delete; this is prototype iteration data, no need to send to trash.
+    await this.db.deleteFrom('album').where('album.id', 'in', idList).execute();
+    return idList;
   }
 }
