@@ -79,6 +79,11 @@ export class AutoTripRepository {
    * `[from, to]`, with the metadata needed by post-fetch filtering: timestamp,
    * presence of GPS, and camera model for burst-grouping.
    *
+   * Filters out "technical" assets — anything that has no camera metadata at
+   * all (no model AND no aperture AND no focal length). On iPhone libraries
+   * this catches screenshots, downloaded images, scanned documents, and other
+   * non-photographic content that shouldn't end up in a trip album.
+   *
    * Returned in chronological ascending order so the caller can do
    * adjacent-pair operations (burst dedup, nearest-GPS bridging) in one pass.
    */
@@ -89,7 +94,7 @@ export class AutoTripRepository {
   ): Promise<Array<{ id: string; fileCreatedAt: Date; hasGps: boolean; model: string | null }>> {
     const rows = await this.db
       .selectFrom('asset')
-      .leftJoin('asset_exif', 'asset_exif.assetId', 'asset.id')
+      .innerJoin('asset_exif', 'asset_exif.assetId', 'asset.id')
       .select([
         'asset.id',
         'asset.fileCreatedAt',
@@ -101,6 +106,16 @@ export class AutoTripRepository {
       .where('asset.deletedAt', 'is', null)
       .where('asset.fileCreatedAt', '>=', from)
       .where('asset.fileCreatedAt', '<=', to)
+      // Skip technical / screenshot-like assets: anything with no real camera
+      // metadata at all. A genuine photo always has at least ONE of {model,
+      // fNumber, focalLength}; screenshots and scanned docs have none.
+      .where((eb) =>
+        eb.or([
+          eb('asset_exif.model', 'is not', null).and(eb.fn('trim', ['asset_exif.model']), '!=', ''),
+          eb('asset_exif.fNumber', 'is not', null),
+          eb('asset_exif.focalLength', 'is not', null),
+        ]),
+      )
       .orderBy('asset.fileCreatedAt', 'asc')
       .execute();
     return rows.map((r) => ({

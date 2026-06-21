@@ -9,8 +9,9 @@ import { BaseService } from 'src/services/base.service';
 const HOME_LOOKBACK_DAYS = 365;
 const AWAY_THRESHOLD_KM = 100; // a single GPS sample at least this far from home counts as "away"
 const MAX_TRIP_GAP_HOURS = 72; // two consecutive away assets more than this apart split into separate trips
-const MIN_TRIP_ASSETS = 5; // ignore multi-day clusters smaller than this — usually one-off layovers
+const MIN_TRIP_ASSETS = 5; // ignore multi-day GPS clusters smaller than this — usually one-off layovers
 const MIN_TRIP_DURATION_HOURS = 18; // clusters spanning at least this long count as multi-day trips
+const MIN_TRIP_TOTAL_ASSETS = 30; // final post-filter album size (after screenshot drop + burst dedup) — anything smaller doesn't feel like a real trip
 const ONE_DAY_MIN_ASSETS = 15; // sub-multi-day clusters still qualify as "one-day trips" if they have at least this many shots…
 const ONE_DAY_MIN_DISTINCT_CITIES = 2; // …AND visit at least this many distinct geocoded cities
 const ONE_DAY_MIN_SPREAD_KM = 10; // …OR span at least this much geographic distance bounding-box-wise
@@ -118,31 +119,44 @@ export class AutoTripService extends BaseService {
     );
 
     const clusters = this.findAwayClusters(gpsAssets, home);
-    const trips: Array<{ assets: GpsAssetRow[]; kind: TripKind }> = [];
-    for (const cluster of clusters) {
-      const kind = this.classifyCluster(cluster);
-      if (kind !== null) {
-        trips.push({ assets: cluster, kind });
-        if (trips.length >= MAX_TRIPS_PER_USER) {
-          break;
-        }
-      }
-    }
 
-    const multiCount = trips.filter((t) => t.kind === 'multi-day').length;
-    const oneDayCount = trips.length - multiCount;
-    this.logger.log(
-      `User ${userId}: ${clusters.length} raw clusters, ${trips.length} kept as trips ` +
-        `(${multiCount} multi-day, ${oneDayCount} one-day)`,
-    );
-
+    // Walk newest → oldest. classifyCluster gates on rough size; createTripAlbum
+    // does the real work (screenshot drop + burst dedup) and can still bail at
+    // the end if the post-filter album turns out too small for a memorable
+    // trip. Keep going past failed candidates until we have MAX_TRIPS_PER_USER
+    // accepted albums or run out of clusters.
     let created = 0;
-    for (const trip of trips) {
-      const ok = await this.createTripAlbum(userId, trip.assets, trip.kind);
+    let multiKept = 0;
+    let oneDayKept = 0;
+    let classified = 0;
+    let rejectedTooSmall = 0;
+    for (const cluster of clusters) {
+      if (created >= MAX_TRIPS_PER_USER) {
+        break;
+      }
+      const kind = this.classifyCluster(cluster);
+      if (kind === null) {
+        continue;
+      }
+      classified++;
+      const ok = await this.createTripAlbum(userId, cluster, kind);
       if (ok) {
         created++;
+        if (kind === 'multi-day') {
+          multiKept++;
+        } else {
+          oneDayKept++;
+        }
+      } else {
+        rejectedTooSmall++;
       }
     }
+
+    this.logger.log(
+      `User ${userId}: ${clusters.length} raw clusters, ${classified} passed initial size gate, ` +
+        `${created} ended up as albums (${multiKept} multi-day, ${oneDayKept} one-day), ` +
+        `${rejectedTooSmall} skipped because final album was too thin`,
+    );
     return created;
   }
 
@@ -230,7 +244,7 @@ export class AutoTripService extends BaseService {
         if (current.length > 0) {
           clusters.push(current);
           current = [];
-          if (clusters.length >= MAX_TRIPS_PER_USER * 3) {
+          if (clusters.length >= MAX_TRIPS_PER_USER * 5) {
             break;
           }
         }
@@ -244,7 +258,7 @@ export class AutoTripService extends BaseService {
         if (gapHours > MAX_TRIP_GAP_HOURS) {
           clusters.push(current);
           current = [];
-          if (clusters.length >= MAX_TRIPS_PER_USER * 3) {
+          if (clusters.length >= MAX_TRIPS_PER_USER * 5) {
             break;
           }
         }
@@ -383,6 +397,13 @@ export class AutoTripService extends BaseService {
 
     if (kept.length === 0) {
       this.logger.warn(`Skipping trip ${tripStart.toISOString()}..${tripEnd.toISOString()} for user ${userId}: empty after filters`);
+      return false;
+    }
+    if (kept.length < MIN_TRIP_TOTAL_ASSETS) {
+      this.logger.debug(
+        `Skipping trip ${tripStart.toISOString()}..${tripEnd.toISOString()} for user ${userId}: ` +
+          `only ${kept.length} assets after filters (need ≥ ${MIN_TRIP_TOTAL_ASSETS})`,
+      );
       return false;
     }
 
