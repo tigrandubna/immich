@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Kysely } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
-import { AssetType, AssetVisibility } from 'src/enum';
+import { AlbumUserRole, AssetType, AssetVisibility } from 'src/enum';
 import { DB } from 'src/schema';
 
 export interface GpsAssetRow {
@@ -149,7 +149,7 @@ export class AutoTripRepository {
       .innerJoin('album_user', 'album_user.albumId', 'album.id')
       .select('album.id')
       .where('album_user.userId', '=', userId)
-      .where('album_user.role', '=', 'owner')
+      .where('album_user.role', '=', AlbumUserRole.Owner)
       .where('album.description', 'like', `${descriptionPrefix}%`)
       .where('album.deletedAt', 'is', null)
       .execute();
