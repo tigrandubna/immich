@@ -9,8 +9,11 @@ import { BaseService } from 'src/services/base.service';
 const HOME_LOOKBACK_DAYS = 365;
 const AWAY_THRESHOLD_KM = 100; // a single GPS sample at least this far from home counts as "away"
 const MAX_TRIP_GAP_HOURS = 72; // two consecutive away assets more than this apart split into separate trips
-const MIN_TRIP_ASSETS = 5; // ignore clusters smaller than this — usually one-off layovers
-const MIN_TRIP_DURATION_HOURS = 18; // and clusters shorter than this in time — same reason
+const MIN_TRIP_ASSETS = 5; // ignore multi-day clusters smaller than this — usually one-off layovers
+const MIN_TRIP_DURATION_HOURS = 18; // clusters spanning at least this long count as multi-day trips
+const ONE_DAY_MIN_ASSETS = 15; // sub-multi-day clusters still qualify as "one-day trips" if they have at least this many shots…
+const ONE_DAY_MIN_DISTINCT_CITIES = 2; // …AND visit at least this many distinct geocoded cities
+const ONE_DAY_MIN_SPREAD_KM = 10; // …OR span at least this much geographic distance bounding-box-wise
 const TIME_PAD_HOURS = 2; // small pre/post window around the trip's GPS range
 const NONGPS_BRIDGE_HOURS = 4; // a GPS-less asset is included only if a GPS asset of the trip is within this much
 const BURST_WINDOW_SECONDS = 15; // adjacent assets closer than this from the same camera count as a burst (covers both true iPhone bursts ~0.1s and manual "re-shoots" within ~15s)
@@ -35,6 +38,24 @@ const MONTHS_RU = [
   'Ноябрь',
   'Декабрь',
 ];
+
+// Genitive forms for "<day> <month> <year>" date strings (used for one-day trips).
+const MONTHS_RU_GEN = [
+  'января',
+  'февраля',
+  'марта',
+  'апреля',
+  'мая',
+  'июня',
+  'июля',
+  'августа',
+  'сентября',
+  'октября',
+  'ноября',
+  'декабря',
+];
+
+type TripKind = 'multi-day' | 'one-day';
 
 @Injectable()
 export class AutoTripService extends BaseService {
@@ -97,29 +118,84 @@ export class AutoTripService extends BaseService {
     );
 
     const clusters = this.findAwayClusters(gpsAssets, home);
-    const trips = clusters
-      .filter((cluster) => {
-        if (cluster.length < MIN_TRIP_ASSETS) {
-          return false;
+    const trips: Array<{ assets: GpsAssetRow[]; kind: TripKind }> = [];
+    for (const cluster of clusters) {
+      const kind = this.classifyCluster(cluster);
+      if (kind !== null) {
+        trips.push({ assets: cluster, kind });
+        if (trips.length >= MAX_TRIPS_PER_USER) {
+          break;
         }
-        // cluster is sorted desc (newest first), so [0] is end and last is start
-        const endMs = cluster[0].fileCreatedAt.getTime();
-        const startMs = cluster[cluster.length - 1].fileCreatedAt.getTime();
-        const durationH = (endMs - startMs) / (1000 * 60 * 60);
-        return durationH >= MIN_TRIP_DURATION_HOURS;
-      })
-      .slice(0, MAX_TRIPS_PER_USER);
+      }
+    }
 
-    this.logger.log(`User ${userId}: ${clusters.length} raw clusters, ${trips.length} kept as trips`);
+    const multiCount = trips.filter((t) => t.kind === 'multi-day').length;
+    const oneDayCount = trips.length - multiCount;
+    this.logger.log(
+      `User ${userId}: ${clusters.length} raw clusters, ${trips.length} kept as trips ` +
+        `(${multiCount} multi-day, ${oneDayCount} one-day)`,
+    );
 
     let created = 0;
     for (const trip of trips) {
-      const ok = await this.createTripAlbum(userId, trip);
+      const ok = await this.createTripAlbum(userId, trip.assets, trip.kind);
       if (ok) {
         created++;
       }
     }
     return created;
+  }
+
+  /**
+   * A cluster qualifies as a trip if either:
+   *  - It spans at least MIN_TRIP_DURATION_HOURS (overnight) and has at least
+   *    MIN_TRIP_ASSETS shots — your classic vacation / weekend away.
+   *  - It's same-day but you took ONE_DAY_MIN_ASSETS+ photos AND moved between
+   *    multiple geocoded cities or covered ONE_DAY_MIN_SPREAD_KM bounding-box
+   *    distance — a deliberate day excursion to nearby places.
+   *
+   * Returns the trip kind or null if the cluster is too small / too local to
+   * deserve its own album.
+   */
+  private classifyCluster(cluster: GpsAssetRow[]): TripKind | null {
+    if (cluster.length === 0) {
+      return null;
+    }
+    // cluster is sorted desc, so [0] is the end and last item is the start.
+    const endMs = cluster[0].fileCreatedAt.getTime();
+    const startMs = cluster[cluster.length - 1].fileCreatedAt.getTime();
+    const durationH = (endMs - startMs) / (1000 * 60 * 60);
+
+    if (durationH >= MIN_TRIP_DURATION_HOURS) {
+      return cluster.length >= MIN_TRIP_ASSETS ? 'multi-day' : null;
+    }
+
+    if (cluster.length < ONE_DAY_MIN_ASSETS) {
+      return null;
+    }
+
+    const distinctCities = new Set(
+      cluster
+        .map((a) => a.city?.toLowerCase().trim())
+        .filter((c): c is string => !!c),
+    );
+    if (distinctCities.size >= ONE_DAY_MIN_DISTINCT_CITIES) {
+      return 'one-day';
+    }
+
+    // Bounding-box spread (cheap O(n) proxy for max pairwise distance).
+    let minLat = Number.POSITIVE_INFINITY;
+    let maxLat = Number.NEGATIVE_INFINITY;
+    let minLon = Number.POSITIVE_INFINITY;
+    let maxLon = Number.NEGATIVE_INFINITY;
+    for (const a of cluster) {
+      if (a.latitude < minLat) minLat = a.latitude;
+      if (a.latitude > maxLat) maxLat = a.latitude;
+      if (a.longitude < minLon) minLon = a.longitude;
+      if (a.longitude > maxLon) maxLon = a.longitude;
+    }
+    const spreadKm = haversineKm(minLat, minLon, maxLat, maxLon);
+    return spreadKm >= ONE_DAY_MIN_SPREAD_KM ? 'one-day' : null;
   }
 
   private computeHomeCentroid(assets: GpsAssetRow[]): { lat: number; lon: number } | null {
@@ -182,7 +258,7 @@ export class AutoTripService extends BaseService {
     return clusters;
   }
 
-  private async createTripAlbum(userId: string, trip: GpsAssetRow[]): Promise<boolean> {
+  private async createTripAlbum(userId: string, trip: GpsAssetRow[], kind: TripKind): Promise<boolean> {
     // trip is sorted desc; convert to chronological order for clearer logging
     const tripEnd = trip[0].fileCreatedAt;
     const tripStart = trip[trip.length - 1].fileCreatedAt;
@@ -310,9 +386,9 @@ export class AutoTripService extends BaseService {
       return false;
     }
 
-    const albumName = this.titleForTrip(trip, tripStart);
+    const albumName = this.titleForTrip(trip, tripStart, kind);
     const description =
-      `${AUTO_DESCRIPTION_PREFIX} ${tripStart.toISOString().slice(0, 10)} – ${tripEnd.toISOString().slice(0, 10)} · ` +
+      `${AUTO_DESCRIPTION_PREFIX} ${kind} · ${tripStart.toISOString().slice(0, 10)} – ${tripEnd.toISOString().slice(0, 10)} · ` +
       `${trip.length} geo-tagged · ${kept.length} kept (dropped ${droppedByBridge} off-trip + ${droppedByBurst} burst-duplicates)`;
 
     // Album cover: prefer the photo with the most NAMED people on it (i.e.
@@ -394,7 +470,7 @@ export class AutoTripService extends BaseService {
     return groups;
   }
 
-  private titleForTrip(trip: GpsAssetRow[], startDate: Date): string {
+  private titleForTrip(trip: GpsAssetRow[], startDate: Date, kind: TripKind): string {
     const cityCounts = new Map<string, number>();
     const countryCounts = new Map<string, number>();
     for (const asset of trip) {
@@ -407,18 +483,22 @@ export class AutoTripService extends BaseService {
     }
     const dominantCity = topKey(cityCounts);
     const dominantCountry = topKey(countryCounts);
-    const monthRu = MONTHS_RU[startDate.getMonth()];
-    const year = startDate.getFullYear();
+    // Multi-day → "Month Year". One-day → "DD month Year" so multiple
+    // day-trips to the same place in the same month don't collide.
+    const datePart =
+      kind === 'multi-day'
+        ? `${MONTHS_RU[startDate.getMonth()]} ${startDate.getFullYear()}`
+        : `${startDate.getDate()} ${MONTHS_RU_GEN[startDate.getMonth()]} ${startDate.getFullYear()}`;
     if (dominantCity && dominantCountry) {
-      return `${dominantCity}, ${dominantCountry} — ${monthRu} ${year}`;
+      return `${dominantCity}, ${dominantCountry} — ${datePart}`;
     }
     if (dominantCountry) {
-      return `${dominantCountry} — ${monthRu} ${year}`;
+      return `${dominantCountry} — ${datePart}`;
     }
     if (dominantCity) {
-      return `${dominantCity} — ${monthRu} ${year}`;
+      return `${dominantCity} — ${datePart}`;
     }
-    return `Поездка — ${monthRu} ${year}`;
+    return `Поездка — ${datePart}`;
   }
 }
 
