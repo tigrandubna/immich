@@ -222,15 +222,34 @@ export class AutoTripRepository {
       .where('name', 'in', englishNames)
       .where('alternateNames', 'is not', null)
       .execute();
+
+    // Letters that exist in other Cyrillic alphabets but NOT modern Russian.
+    //   ї є і ґ – Ukrainian
+    //   ў        – Belarusian
+    //   ѓ ѕ љ њ ћ ђ џ – various South Slavic / Macedonian / Serbian
+    //   ѣ ѳ ѵ    – pre-1918 Russian (still want to skip — gives "Бетъырбухъ" style)
+    // Any alternate containing one of these is dropped, which usually pushes
+    // us toward the modern Russian rendering.
+    const NON_RUSSIAN_CYRILLIC = /[іїєґўѓѕљњћђџѣѳѵ]/i;
+    const ANY_CYRILLIC = /[Ѐ-ӿ]/;
+
     for (const row of rows) {
       if (out.has(row.name)) {
-        continue; // already have one, prefer first hit
+        continue;
       }
-      const alternates = (row.alternateNames ?? '').split(',');
-      const cyrillic = alternates.find((s) => /[Ѐ-ӿ]/.test(s));
-      if (cyrillic) {
-        out.set(row.name, cyrillic.trim());
+      const alternates = (row.alternateNames ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => ANY_CYRILLIC.test(s) && !NON_RUSSIAN_CYRILLIC.test(s));
+      if (alternates.length === 0) {
+        continue;
       }
+      // Pick the longest remaining (usually the full canonical name —
+      // "Нижний Новгород" beats the short "Горький"; "Санкт-Петербург"
+      // beats "Питер"). Stable tiebreaker: ASCII order so reruns are
+      // deterministic.
+      alternates.sort((a, b) => b.length - a.length || a.localeCompare(b, 'ru'));
+      out.set(row.name, alternates[0]);
     }
     return out;
   }
