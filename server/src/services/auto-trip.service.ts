@@ -13,8 +13,9 @@ const MIN_TRIP_ASSETS = 5; // ignore clusters smaller than this — usually one-
 const MIN_TRIP_DURATION_HOURS = 18; // and clusters shorter than this in time — same reason
 const TIME_PAD_HOURS = 2; // small pre/post window around the trip's GPS range
 const NONGPS_BRIDGE_HOURS = 4; // a GPS-less asset is included only if a GPS asset of the trip is within this much
-const BURST_WINDOW_SECONDS = 5; // adjacent assets closer than this from the same camera count as a burst
-const BURST_KEEP = 1; // …and we keep only this many (the sharpest) per burst
+const BURST_WINDOW_SECONDS = 15; // adjacent assets closer than this from the same camera count as a burst (covers both true iPhone bursts ~0.1s and manual "re-shoots" within ~15s)
+const BURST_KEEP = 3; // keep up to this many sharpest shots per burst
+const BURST_BLUR_CONCURRENCY = 8; // how many preview-blur measurements to run in parallel
 const MAX_TRIPS_PER_USER = 5; // prototype: only build albums for the N most recent trips per user
 const AUTO_DESCRIPTION_PREFIX = 'Auto-detected trip ·';
 
@@ -212,34 +213,55 @@ export class AutoTripService extends BaseService {
     const droppedByBridge = candidates.length - bridged.length;
 
     // Step 2: burst dedup. Walk chronologically, group consecutive assets
-    // within BURST_WINDOW_SECONDS from the same camera model, keep the
-    // sharpest by face blur score (proxy for "best of duplicates"). For
-    // assets without faces, fall back to keeping the first.
-    const blurScores = await this.autoTripRepository.getMaxBlurScores(bridged.map((a) => a.id));
-    const kept: typeof bridged = [];
-    let groupStart = 0;
-    for (let i = 0; i <= bridged.length; i++) {
-      const prev = bridged[i - 1];
-      const curr = bridged[i];
-      const breakHere =
-        i === bridged.length ||
-        !prev ||
-        !curr ||
-        curr.fileCreatedAt.getTime() - prev.fileCreatedAt.getTime() > BURST_WINDOW_SECONDS * 1000 ||
-        (prev.model ?? '') !== (curr.model ?? '');
-      if (!breakHere) {
+    // within BURST_WINDOW_SECONDS from the same camera model, then keep
+    // the top BURST_KEEP sharpest of each group.
+    //
+    // Sharpness comes from a Laplacian-variance score computed on the
+    // asset's preview thumbnail — same metric the fork already uses for
+    // face crops, but applied per-asset so landscapes without faces get
+    // ranked too. We only score assets that are actually in a burst (>1
+    // member) to keep the work bounded.
+    const groups = this.groupBursts(bridged);
+    const burstAssetIds = groups
+      .filter((g) => g.length > 1)
+      .flatMap((g) => g)
+      .map((a) => a.id);
+    const previewPaths = await this.autoTripRepository.getPreviewPaths(burstAssetIds);
+    const blurScores = new Map<string, number>();
+    const tasks: Array<() => Promise<void>> = [];
+    for (const id of burstAssetIds) {
+      const path = previewPaths.get(id);
+      if (!path) {
         continue;
       }
-      const group = bridged.slice(groupStart, i);
-      if (group.length > 0) {
-        // Sort descending by blur score (sharper first); assets with no score
-        // sink to the bottom. Keep BURST_KEEP from the top of the sort.
-        const ranked = [...group].sort(
-          (a, b) => (blurScores.get(b.id) ?? -1) - (blurScores.get(a.id) ?? -1),
-        );
-        kept.push(...ranked.slice(0, Math.max(1, group.length <= 2 ? group.length : BURST_KEEP)));
+      tasks.push(async () => {
+        const score = await this.mediaRepository.computeImageBlurScore(path);
+        if (score !== null) {
+          blurScores.set(id, score);
+        }
+      });
+    }
+    await runInBatches(tasks, BURST_BLUR_CONCURRENCY);
+
+    const kept: typeof bridged = [];
+    for (const group of groups) {
+      if (group.length === 1) {
+        kept.push(group[0]);
+        continue;
       }
-      groupStart = i;
+      // Tiebreaker chain: blur score desc → file timestamp asc (earliest of
+      // the burst wins ties; usually the burst's first frame is the shot
+      // the user actually framed).
+      const ranked = [...group].sort((a, b) => {
+        const sa = blurScores.get(a.id) ?? Number.NEGATIVE_INFINITY;
+        const sb = blurScores.get(b.id) ?? Number.NEGATIVE_INFINITY;
+        if (sb !== sa) {
+          return sb - sa;
+        }
+        return a.fileCreatedAt.getTime() - b.fileCreatedAt.getTime();
+      });
+      const keepN = Math.min(group.length, BURST_KEEP);
+      kept.push(...ranked.slice(0, keepN));
     }
     // Re-sort kept ascending (sort above scrambled within bursts)
     kept.sort((a, b) => a.fileCreatedAt.getTime() - b.fileCreatedAt.getTime());
@@ -287,6 +309,36 @@ export class AutoTripService extends BaseService {
 
 
 
+  /**
+   * Group chronologically-sorted assets into bursts. Two adjacent assets
+   * join the same burst when their timestamps differ by less than
+   * BURST_WINDOW_SECONDS AND they come from the same camera model. Returns
+   * each burst as its own sub-array; singletons stay as 1-element groups.
+   */
+  private groupBursts<T extends { fileCreatedAt: Date; model: string | null }>(assets: T[]): T[][] {
+    const groups: T[][] = [];
+    let current: T[] = [];
+    for (const a of assets) {
+      const last = current[current.length - 1];
+      if (
+        !last ||
+        a.fileCreatedAt.getTime() - last.fileCreatedAt.getTime() > BURST_WINDOW_SECONDS * 1000 ||
+        (last.model ?? '') !== (a.model ?? '')
+      ) {
+        if (current.length > 0) {
+          groups.push(current);
+        }
+        current = [a];
+      } else {
+        current.push(a);
+      }
+    }
+    if (current.length > 0) {
+      groups.push(current);
+    }
+    return groups;
+  }
+
   private titleForTrip(trip: GpsAssetRow[], startDate: Date): string {
     const cityCounts = new Map<string, number>();
     const countryCounts = new Map<string, number>();
@@ -330,6 +382,22 @@ function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const m = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? (sorted[m - 1] + sorted[m]) / 2 : sorted[m];
+}
+
+/**
+ * Run an array of async thunks with bounded concurrency. Used to compute
+ * preview-blur scores for burst members in parallel without hammering the
+ * libuv pool / Sharp instance limit.
+ */
+async function runInBatches(tasks: Array<() => Promise<void>>, limit: number): Promise<void> {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+    while (i < tasks.length) {
+      const idx = i++;
+      await tasks[idx]();
+    }
+  });
+  await Promise.all(workers);
 }
 
 /**

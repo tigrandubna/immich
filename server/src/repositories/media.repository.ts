@@ -197,6 +197,27 @@ export class MediaRepository {
   // Laplacian-variance blur metric. Apply a 3x3 Laplacian kernel to the
   // greyscale face crop and return the variance of the response — higher
   // values indicate sharper edges, very low values indicate a blurry face.
+  /**
+   * Laplacian-variance sharpness score for an entire image at `path`. Same
+   * metric used internally for face crops, but applied to the asset's preview
+   * thumbnail so we can rank arbitrary photos (including landscapes with no
+   * faces). Downsizes to 512x512 first so the cost is bounded — a single
+   * call is ~30-60 ms regardless of original size.
+   *
+   * Higher = sharper. Returns null on read failure.
+   */
+  async computeImageBlurScore(path: string): Promise<number | null> {
+    try {
+      const pipeline = sharp(path, { failOn: 'none' }).resize(512, 512, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      });
+      return await this.computeBlurScore(pipeline);
+    } catch {
+      return null;
+    }
+  }
+
   private async computeBlurScore(pipeline: sharp.Sharp): Promise<number | null> {
     try {
       const stats = await pipeline

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Kysely } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
-import { AlbumUserRole, AssetType, AssetVisibility } from 'src/enum';
+import { AlbumUserRole, AssetFileType, AssetType, AssetVisibility } from 'src/enum';
 import { DB } from 'src/schema';
 
 export interface GpsAssetRow {
@@ -133,6 +133,28 @@ export class AutoTripRepository {
       if (r.blur !== null) {
         out.set(r.assetId, Number(r.blur));
       }
+    }
+    return out;
+  }
+
+  /**
+   * Preview-file path per assetId (only assets that have one). The burst
+   * dedup step ranks shots by computing a Laplacian-variance sharpness
+   * score on these previews.
+   */
+  async getPreviewPaths(assetIds: string[]): Promise<Map<string, string>> {
+    if (assetIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.db
+      .selectFrom('asset_file')
+      .select(['asset_file.assetId', 'asset_file.path'])
+      .where('asset_file.assetId', 'in', assetIds)
+      .where('asset_file.type', '=', AssetFileType.Preview)
+      .execute();
+    const out = new Map<string, string>();
+    for (const r of rows) {
+      out.set(r.assetId, r.path);
     }
     return out;
   }
