@@ -315,16 +315,33 @@ export class AutoTripService extends BaseService {
       `${AUTO_DESCRIPTION_PREFIX} ${tripStart.toISOString().slice(0, 10)} – ${tripEnd.toISOString().slice(0, 10)} · ` +
       `${trip.length} geo-tagged · ${kept.length} kept (dropped ${droppedByBridge} off-trip + ${droppedByBurst} burst-duplicates)`;
 
-    // Pick a thumbnail from somewhere in the middle of the GPS cluster — the
-    // first asset by date is usually a transit shot ("at the airport"), and
-    // the last is a transit shot back. The middle is more representative of
-    // the actual destination.
+    // Album cover: prefer the photo with the most NAMED people on it (i.e.
+    // faces already linked to a person with a non-empty name). For trips,
+    // shots of recognised friends/family are almost always better covers
+    // than scenery alone. Tiebreaker: aesthetic score (or blur if the ML
+    // model wasn't used). If nothing in the album has any named face at all,
+    // fall back to the middle GPS asset, which has been the heuristic so far.
+    const namedFaceCounts = await this.autoTripRepository.getNamedFaceCounts(kept.map((a) => a.id));
+    const coverRanked = [...kept].sort((a, b) => {
+      const na = namedFaceCounts.get(a.id) ?? 0;
+      const nb = namedFaceCounts.get(b.id) ?? 0;
+      if (nb !== na) {
+        return nb - na;
+      }
+      // Tiebreaker — whichever quality signal we actually computed
+      const qa = (useAesthetic ? aestheticScores.get(a.id) : blurScores.get(a.id)) ?? 0;
+      const qb = (useAesthetic ? aestheticScores.get(b.id) : blurScores.get(b.id)) ?? 0;
+      return qb - qa;
+    });
+    const bestNamedCover = coverRanked[0];
+    const bestNamedCount = namedFaceCounts.get(bestNamedCover?.id ?? '') ?? 0;
     const middle = trip[Math.floor(trip.length / 2)];
+    const coverAsset = bestNamedCount > 0 ? bestNamedCover : (middle ?? kept[0]);
 
     this.logger.log(
       `Creating trip album "${albumName}" for user ${userId} with ${kept.length} assets ` +
         `(GPS ${trip.length}, candidates ${candidates.length}, off-trip dropped ${droppedByBridge}, ` +
-        `burst-dups dropped ${droppedByBurst})`,
+        `burst-dups dropped ${droppedByBurst}, cover has ${bestNamedCount} named face(s))`,
     );
 
     try {
@@ -332,7 +349,7 @@ export class AutoTripService extends BaseService {
         {
           albumName,
           description,
-          albumThumbnailAssetId: middle?.id ?? kept[0].id,
+          albumThumbnailAssetId: coverAsset?.id ?? kept[0].id,
         },
         kept.map((a) => a.id),
         [{ userId, role: AlbumUserRole.Owner }],

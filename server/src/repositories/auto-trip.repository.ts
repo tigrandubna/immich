@@ -138,6 +138,33 @@ export class AutoTripRepository {
   }
 
   /**
+   * Number of faces with a named, non-deleted person on each given asset.
+   * Used by the trip-album cover selector — photos with more recognised
+   * people (named, not just unidentified faces) usually make better
+   * thumbnails than scenery shots from the middle of the cluster.
+   */
+  async getNamedFaceCounts(assetIds: string[]): Promise<Map<string, number>> {
+    if (assetIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.db
+      .selectFrom('asset_face')
+      .innerJoin('person', 'person.id', 'asset_face.personId')
+      .select((eb) => ['asset_face.assetId', eb.fn.countAll<number>().as('named')])
+      .where('asset_face.assetId', 'in', assetIds)
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', 'is', true)
+      .where('person.name', '!=', '')
+      .groupBy('asset_face.assetId')
+      .execute();
+    const out = new Map<string, number>();
+    for (const r of rows) {
+      out.set(r.assetId, Number(r.named));
+    }
+    return out;
+  }
+
+  /**
    * Preview-file path per assetId (only assets that have one). The burst
    * dedup step ranks shots by computing a Laplacian-variance sharpness
    * score on these previews.
