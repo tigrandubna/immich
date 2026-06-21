@@ -353,7 +353,7 @@
     "tag_cleanup_job": "Tag cleanup",
     "rewrite_face_sidecars_job": "Rewrite face XMP sidecars",
     "deduplicate_asset_faces_job": "Deduplicate overlapping faces",
-    "detect_recent_trips_job": "Detect recent trips (auto-album prototype)",
+    "detect_recent_trips_job": "Detect trips and create albums",
     "template_email_available_tags": "You can use the following variables in your template: {tags}",
     "template_email_if_empty": "If the template is empty, the default email will be used.",
     "template_email_invite_album": "Invite Album Template",

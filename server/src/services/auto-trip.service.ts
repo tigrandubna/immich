@@ -22,7 +22,7 @@ const BURST_KEEP = 3; // keep up to this many sharpest shots per burst
 const BURST_BLUR_CONCURRENCY = 8; // how many preview-blur measurements to run in parallel
 const AESTHETIC_MODEL_NAME = 'cafe-aesthetic'; // hosted under /cache/aesthetic/<name>/scorer/model.onnx
 const AESTHETIC_WEIGHT = 0.6; // final = AESTHETIC_WEIGHT * aesthetic + (1-AESTHETIC_WEIGHT) * normalised blur (per-burst max=1)
-const MAX_TRIPS_PER_USER = 30; // prototype: only build albums for the N most recent trips per user
+const MAX_TRIPS_PER_USER = 1000; // safety cap; in practice we run out of clusters first on any real library
 const AUTO_DESCRIPTION_PREFIX = 'Auto-detected trip ·';
 
 const MONTHS_RU = [
@@ -320,9 +320,8 @@ export class AutoTripService extends BaseService {
         if (current.length > 0) {
           clusters.push(current);
           current = [];
-          if (clusters.length >= MAX_TRIPS_PER_USER * 5) {
-            break;
-          }
+          // No more early break: with the cap raised to 1000 we want to walk
+          // the user's full GPS history once.
         }
         lastAwayTime = null;
         continue;
@@ -334,9 +333,8 @@ export class AutoTripService extends BaseService {
         if (gapHours > MAX_TRIP_GAP_HOURS) {
           clusters.push(current);
           current = [];
-          if (clusters.length >= MAX_TRIPS_PER_USER * 5) {
-            break;
-          }
+          // No more early break: with the cap raised to 1000 we want to walk
+          // the user's full GPS history once.
         }
       }
       current.push(asset);
