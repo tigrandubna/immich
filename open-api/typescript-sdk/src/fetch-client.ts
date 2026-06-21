@@ -7015,7 +7015,8 @@ export enum ManualJobName {
     MemoryCreate = "memory-create",
     BackupDatabase = "backup-database",
     RewriteFaceSidecars = "rewrite-face-sidecars",
-    DeduplicateAssetFaces = "deduplicate-asset-faces"
+    DeduplicateAssetFaces = "deduplicate-asset-faces",
+    DetectRecentTrips = "detect-recent-trips"
 }
 export enum QueueName {
     ThumbnailGeneration = "thumbnailGeneration",

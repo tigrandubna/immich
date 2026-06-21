@@ -349,6 +349,7 @@
     "tag_cleanup_job": "Очистка тега",
     "rewrite_face_sidecars_job": "Перезаписать XMP с лицами",
     "deduplicate_asset_faces_job": "Объединить дубликаты лиц",
+    "detect_recent_trips_job": "Найти недавние поездки (прототип авто-альбомов)",
     "template_email_available_tags": "В этом шаблоне доступны следующие переменные: {tags}",
     "template_email_if_empty": "Оставьте пустым, чтобы использовать шаблон по умолчанию.",
     "template_email_invite_album": "Шаблон приглашения в альбом",

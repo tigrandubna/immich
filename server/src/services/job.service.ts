@@ -42,6 +42,10 @@ const asJobItem = (dto: JobCreateDto): JobItem => {
       return { name: JobName.AssetFaceDedupQueueAll };
     }
 
+    case ManualJobName.DetectRecentTrips: {
+      return { name: JobName.AutoTripDetectRecent };
+    }
+
     default: {
       throw new BadRequestException('Invalid job name');
     }

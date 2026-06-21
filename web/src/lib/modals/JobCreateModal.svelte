@@ -18,6 +18,7 @@
     { title: $t('admin.backup_database'), value: ManualJobName.BackupDatabase },
     { title: $t('admin.rewrite_face_sidecars_job'), value: ManualJobName.RewriteFaceSidecars },
     { title: $t('admin.deduplicate_asset_faces_job'), value: ManualJobName.DeduplicateAssetFaces },
+    { title: $t('admin.detect_recent_trips_job'), value: ManualJobName.DetectRecentTrips },
   ].map(({ value, title }) => ({ id: value, label: title, value }));
 
   let selectedJob: ComboBoxOption | undefined = $state(undefined);

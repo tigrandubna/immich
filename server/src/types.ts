@@ -366,6 +366,7 @@ export type JobItem =
   | { name: JobName.FaceThumbnailQueueAll; data: IBaseJob }
   | { name: JobName.FaceGenerateThumbnail; data: IEntityJob }
   | { name: JobName.AssetFaceDedupQueueAll; data?: IBaseJob }
+  | { name: JobName.AutoTripDetectRecent; data?: IBaseJob }
   | { name: JobName.AssetFaceDedup; data: IEntityJob }
 
   // Smart Search
