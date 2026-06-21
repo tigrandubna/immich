@@ -240,6 +240,9 @@ export class AutoTripRepository {
       const alternates = (row.alternateNames ?? '')
         .split(',')
         .map((s) => s.trim())
+        // Strip Uzbek/Tajik suffix " ош" ("city of X") — "Ереван ош" is
+        // technically Russian-Cyrillic but reads as broken Russian.
+        .map((s) => s.replace(/\s+ош$/u, ''))
         .filter((s) => ANY_CYRILLIC.test(s) && !NON_RUSSIAN_CYRILLIC.test(s));
       if (alternates.length === 0) {
         continue;

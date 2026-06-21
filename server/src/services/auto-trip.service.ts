@@ -58,6 +58,18 @@ const MONTHS_RU_GEN = [
 
 type TripKind = 'multi-day' | 'one-day';
 
+// Manual overrides for cities where the GeoNames-based heuristic still picks
+// a non-Russian alternate (Tajik/Uzbek "<name> ош", Belarusian forms without
+// uniquely-Belarusian letters, etc.). Adds entries lazily — only put a city
+// here when its auto-derived title is wrong. Falls back to the GeoNames
+// lookup for anything not listed.
+const CITIES_RU_OVERRIDE: Record<string, string> = {
+  'Yerevan': 'Ереван',
+  'Saint Petersburg': 'Санкт-Петербург',
+  'Gorodets': 'Городец',
+  'Kostroma': 'Кострома',
+};
+
 // English country names (as immich's reverse geocoder stores them in
 // asset_exif.country) → preferred Russian rendering. Common short forms; for
 // countries not in the table the title falls back to the English original.
@@ -580,7 +592,9 @@ export class AutoTripService extends BaseService {
     const dominantCountryEn = topKey(countryCounts);
     // Translate to Russian when we have a hit; otherwise leave the original
     // (less ugly than dropping the field).
-    const dominantCity = dominantCityEn ? (cityRu.get(dominantCityEn) ?? dominantCityEn) : undefined;
+    const dominantCity = dominantCityEn
+      ? (CITIES_RU_OVERRIDE[dominantCityEn] ?? cityRu.get(dominantCityEn) ?? dominantCityEn)
+      : undefined;
     const dominantCountry = dominantCountryEn
       ? (COUNTRIES_RU[dominantCountryEn] ?? dominantCountryEn)
       : undefined;
