@@ -16,6 +16,7 @@ export enum ModelTask {
   FACIAL_RECOGNITION = 'facial-recognition',
   SEARCH = 'clip',
   OCR = 'ocr',
+  AESTHETIC = 'aesthetic',
 }
 
 export enum ModelType {
@@ -25,6 +26,7 @@ export enum ModelType {
   TEXTUAL = 'textual',
   VISUAL = 'visual',
   OCR = 'ocr',
+  SCORER = 'scorer',
 }
 
 export type ModelPayload = { imagePath: string } | { text: string };
@@ -59,6 +61,16 @@ export type OcrRequest = {
 };
 export type OcrResponse = { [ModelTask.OCR]: OCR } & VisualResponse;
 
+export type AestheticOptions = ModelOptions;
+export type AestheticRequest = {
+  [ModelTask.AESTHETIC]: {
+    [ModelType.SCORER]: ModelOptions;
+  };
+};
+// The Python scorer returns a single float in [0, 1]; predict() just hands it
+// through unchanged.
+export type AestheticResponse = { [ModelTask.AESTHETIC]: number } & VisualResponse;
+
 export type FacialRecognitionRequest = {
   [ModelTask.FACIAL_RECOGNITION]: {
     [ModelType.DETECTION]: ModelOptions & { options: { minScore: number } };
@@ -74,7 +86,12 @@ export interface Face {
 
 export type FacialRecognitionResponse = { [ModelTask.FACIAL_RECOGNITION]: Face[] } & VisualResponse;
 export type DetectedFaces = { faces: Face[] } & VisualResponse;
-export type MachineLearningRequest = ClipVisualRequest | ClipTextualRequest | FacialRecognitionRequest | OcrRequest;
+export type MachineLearningRequest =
+  | ClipVisualRequest
+  | ClipTextualRequest
+  | FacialRecognitionRequest
+  | OcrRequest
+  | AestheticRequest;
 export type TextEncodingOptions = ModelOptions & { language?: string };
 
 @Injectable()
@@ -216,6 +233,32 @@ export class MachineLearningRepository {
     const request = { [ModelTask.SEARCH]: { [ModelType.TEXTUAL]: { modelName, options: { language } } } };
     const response = await this.predict<ClipTextualResponse>({ text }, request);
     return response[ModelTask.SEARCH];
+  }
+
+  /**
+   * Single-image aesthetic score in [0, 1] from the cafe_aesthetic BEiT
+   * classifier loaded server-side by the immich_ml container. Higher = the
+   * model considers the photo more aesthetically pleasing.
+   *
+   * Used by the auto-trip prototype to rank burst frames beyond pure
+   * sharpness. Returns null if the ML server is unreachable or the model
+   * isn't loaded — callers should fall back to a non-ML metric so the job
+   * still completes when the model file is missing.
+   */
+  async aestheticScore(imagePath: string, { modelName }: AestheticOptions): Promise<number | null> {
+    const request = {
+      [ModelTask.AESTHETIC]: {
+        [ModelType.SCORER]: { modelName },
+      },
+    };
+    try {
+      const response = await this.predict<AestheticResponse>({ imagePath }, request);
+      const score = response[ModelTask.AESTHETIC];
+      return typeof score === 'number' && Number.isFinite(score) ? score : null;
+    } catch (error: Error | unknown) {
+      this.logger.warn(`Aesthetic scoring failed for ${imagePath}: ${error instanceof Error ? error.message : error}`);
+      return null;
+    }
   }
 
   async ocr(imagePath: string, { modelName, minDetectionScore, minRecognitionScore, maxResolution }: OcrOptions) {

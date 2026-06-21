@@ -16,6 +16,8 @@ const NONGPS_BRIDGE_HOURS = 4; // a GPS-less asset is included only if a GPS ass
 const BURST_WINDOW_SECONDS = 15; // adjacent assets closer than this from the same camera count as a burst (covers both true iPhone bursts ~0.1s and manual "re-shoots" within ~15s)
 const BURST_KEEP = 3; // keep up to this many sharpest shots per burst
 const BURST_BLUR_CONCURRENCY = 8; // how many preview-blur measurements to run in parallel
+const AESTHETIC_MODEL_NAME = 'cafe-aesthetic'; // hosted under /cache/aesthetic/<name>/scorer/model.onnx
+const AESTHETIC_WEIGHT = 0.6; // final = AESTHETIC_WEIGHT * aesthetic + (1-AESTHETIC_WEIGHT) * normalised blur (per-burst max=1)
 const MAX_TRIPS_PER_USER = 5; // prototype: only build albums for the N most recent trips per user
 const AUTO_DESCRIPTION_PREFIX = 'Auto-detected trip ·';
 
@@ -228,20 +230,40 @@ export class AutoTripService extends BaseService {
       .map((a) => a.id);
     const previewPaths = await this.autoTripRepository.getPreviewPaths(burstAssetIds);
     const blurScores = new Map<string, number>();
+    const aestheticScores = new Map<string, number>();
     const tasks: Array<() => Promise<void>> = [];
+    let aestheticAttempts = 0;
+    let aestheticHits = 0;
     for (const id of burstAssetIds) {
       const path = previewPaths.get(id);
       if (!path) {
         continue;
       }
       tasks.push(async () => {
-        const score = await this.mediaRepository.computeImageBlurScore(path);
-        if (score !== null) {
-          blurScores.set(id, score);
+        const [blur, aesthetic] = await Promise.all([
+          this.mediaRepository.computeImageBlurScore(path),
+          this.machineLearningRepository.aestheticScore(path, { modelName: AESTHETIC_MODEL_NAME }),
+        ]);
+        if (blur !== null) {
+          blurScores.set(id, blur);
+        }
+        aestheticAttempts++;
+        if (aesthetic !== null) {
+          aestheticScores.set(id, aesthetic);
+          aestheticHits++;
         }
       });
     }
     await runInBatches(tasks, BURST_BLUR_CONCURRENCY);
+
+    // If the ML aesthetic model wasn't reachable for any frame (file missing,
+    // server unhealthy), fall back to blur-only ranking instead of zeroing
+    // every photo out. Mostly-hits is treated as success.
+    const useAesthetic = aestheticAttempts > 0 && aestheticHits / aestheticAttempts > 0.5;
+    this.logger.log(
+      `User ${userId} burst ranking: ${aestheticHits}/${aestheticAttempts} aesthetic scores resolved; ` +
+        `combining=${useAesthetic}`,
+    );
 
     const kept: typeof bridged = [];
     for (const group of groups) {
@@ -249,15 +271,31 @@ export class AutoTripService extends BaseService {
         kept.push(group[0]);
         continue;
       }
-      // Tiebreaker chain: blur score desc → file timestamp asc (earliest of
-      // the burst wins ties; usually the burst's first frame is the shot
-      // the user actually framed).
+      // Combined score:
+      //   normalised blur per group (max within burst = 1) — keeps blur on
+      //     the same 0..1 scale as the aesthetic prob so they can be weighted
+      //   aesthetic prob from cafe_aesthetic (0..1 already)
+      // Fall back to blur-only when aesthetic isn't available for the run.
+      const groupMaxBlur = Math.max(
+        ...group.map((a) => blurScores.get(a.id) ?? 0),
+        1, // avoid divide-by-zero when no scores at all
+      );
+      const scoreOf = (id: string): number => {
+        const blur = blurScores.get(id);
+        const blurNorm = blur === undefined ? 0 : blur / groupMaxBlur;
+        if (!useAesthetic) {
+          return blurNorm;
+        }
+        const aesthetic = aestheticScores.get(id) ?? 0;
+        return AESTHETIC_WEIGHT * aesthetic + (1 - AESTHETIC_WEIGHT) * blurNorm;
+      };
       const ranked = [...group].sort((a, b) => {
-        const sa = blurScores.get(a.id) ?? Number.NEGATIVE_INFINITY;
-        const sb = blurScores.get(b.id) ?? Number.NEGATIVE_INFINITY;
+        const sa = scoreOf(a.id);
+        const sb = scoreOf(b.id);
         if (sb !== sa) {
           return sb - sa;
         }
+        // tie: earliest first (usually the shot the user actually framed)
         return a.fileCreatedAt.getTime() - b.fileCreatedAt.getTime();
       });
       const keepN = Math.min(group.length, BURST_KEEP);

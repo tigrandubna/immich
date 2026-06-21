@@ -75,6 +75,11 @@ _INSIGHTFACE_MODELS = {
 }
 
 
+_CAFE_AESTHETIC_MODELS = {
+    "cafe-aesthetic",
+}
+
+
 _PADDLE_MODELS = {
     "PP-OCRv5_server",
     "PP-OCRv5_mobile",
@@ -174,5 +179,8 @@ def get_model_source(model_name: str) -> ModelSource | None:
 
     if cleaned_name in _PADDLE_MODELS:
         return ModelSource.PADDLE
+
+    if cleaned_name in _CAFE_AESTHETIC_MODELS:
+        return ModelSource.CAFE
 
     return None
