@@ -926,6 +926,7 @@ export enum DatabaseLock {
   MaintenanceOperation = 621,
   MemoryCreation = 777,
   VersionCheck = 800,
+  AutoTripDetect = 900,
 }
 
 export enum MaintenanceAction {

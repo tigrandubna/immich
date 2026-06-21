@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { OnJob } from 'src/decorators';
-import { AlbumUserRole, JobName, JobStatus, QueueName } from 'src/enum';
+import { AlbumUserRole, DatabaseLock, JobName, JobStatus, QueueName } from 'src/enum';
 import { GpsAssetRow } from 'src/repositories/auto-trip.repository';
 import { BaseService } from 'src/services/base.service';
 
@@ -143,23 +143,34 @@ export class AutoTripService extends BaseService {
    */
   @OnJob({ name: JobName.AutoTripDetectRecent, queue: QueueName.BackgroundTask })
   async handleDetectRecentTrips(): Promise<JobStatus> {
-    const ownerIds = await this.autoTripRepository.getDistinctOwnersWithGps();
-    if (ownerIds.length === 0) {
-      this.logger.log('No users with GPS-tagged assets found, skipping trip detection');
-      return JobStatus.Skipped;
-    }
-
-    this.logger.log(`Running trip detection prototype across ${ownerIds.length} user(s)`);
-    let totalAlbumsCreated = 0;
-    for (const ownerId of ownerIds) {
-      try {
-        totalAlbumsCreated += await this.processUser(ownerId);
-      } catch (error) {
-        this.logger.error(`Trip detection failed for user ${ownerId}: ${error}`);
+    // Detection is heavy and writes albums to the DB. The BackgroundTask
+    // queue runs many workers in parallel, and BullMQ may also re-execute
+    // stalled jobs after a worker restart (we hit this in the wild when a
+    // hot-reload restart happened during a manual run + the manual job got
+    // re-queued, both runs racing on the same library and producing
+    // duplicate albums). pg_advisory_lock serialises detection — if a run
+    // is in flight, the second worker waits, then re-enters as a no-op
+    // steady-state pass (every cluster matches an album from the first
+    // run, nothing new gets created).
+    return this.databaseRepository.withLock(DatabaseLock.AutoTripDetect, async () => {
+      const ownerIds = await this.autoTripRepository.getDistinctOwnersWithGps();
+      if (ownerIds.length === 0) {
+        this.logger.log('No users with GPS-tagged assets found, skipping trip detection');
+        return JobStatus.Skipped;
       }
-    }
-    this.logger.log(`Trip detection done. Created ${totalAlbumsCreated} album(s) total`);
-    return JobStatus.Success;
+
+      this.logger.log(`Running trip detection across ${ownerIds.length} user(s)`);
+      let totalAlbumsTouched = 0;
+      for (const ownerId of ownerIds) {
+        try {
+          totalAlbumsTouched += await this.processUser(ownerId);
+        } catch (error) {
+          this.logger.error(`Trip detection failed for user ${ownerId}: ${error}`);
+        }
+      }
+      this.logger.log(`Trip detection done. Created/updated ${totalAlbumsTouched} album(s) total`);
+      return JobStatus.Success;
+    });
   }
 
   private async processUser(userId: string): Promise<number> {
@@ -212,7 +223,8 @@ export class AutoTripService extends BaseService {
     // the end if the post-filter album turns out too small for a memorable
     // trip.
     let created = 0;
-    let merged = 0;
+    let mergedWithChanges = 0; // matched existing album, added at least one new asset
+    let mergedUnchanged = 0; // matched existing album, nothing new to add (steady-state path)
     let assetsAddedTotal = 0;
     let multiKept = 0;
     let oneDayKept = 0;
@@ -238,8 +250,10 @@ export class AutoTripService extends BaseService {
         const match = albumPool[matchIdx];
         const addedCount = await this.mergeClusterIntoAlbum(userId, cluster, match);
         if (addedCount > 0) {
-          merged++;
+          mergedWithChanges++;
           assetsAddedTotal += addedCount;
+        } else {
+          mergedUnchanged++;
         }
         // Either way, this album is now claimed for this run.
         albumPool.splice(matchIdx, 1);
@@ -262,10 +276,11 @@ export class AutoTripService extends BaseService {
     this.logger.log(
       `User ${userId}: ${clusters.length} raw clusters, ${classified} passed initial size gate. ` +
         `Created ${created} new album(s) (${multiKept} multi-day, ${oneDayKept} one-day); ` +
-        `merged into ${merged} existing album(s) adding ${assetsAddedTotal} asset(s); ` +
+        `added ${assetsAddedTotal} asset(s) into ${mergedWithChanges} existing album(s); ` +
+        `${mergedUnchanged} existing album(s) re-confirmed unchanged; ` +
         `${rejectedTooSmall} skipped because final album was too thin`,
     );
-    return created + merged;
+    return created + mergedWithChanges;
   }
 
   /**
