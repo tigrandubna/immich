@@ -361,4 +361,18 @@ export class AutoTripRepository {
       .where('album.id', '=', albumId)
       .execute();
   }
+
+  /**
+   * Update both `albumName` and `description` of an album in one shot.
+   * Used during incremental merge to re-title auto-detected albums when
+   * the title format changes (e.g. so two trips to the same city in the
+   * same month get distinct names).
+   */
+  async updateAlbumNameAndDescription(albumId: string, albumName: string, description: string): Promise<void> {
+    await this.db
+      .updateTable('album')
+      .set({ albumName, description })
+      .where('album.id', '=', albumId)
+      .execute();
+  }
 }

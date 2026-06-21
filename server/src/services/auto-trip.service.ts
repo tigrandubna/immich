@@ -248,7 +248,7 @@ export class AutoTripService extends BaseService {
 
       if (matchIdx >= 0) {
         const match = albumPool[matchIdx];
-        const addedCount = await this.mergeClusterIntoAlbum(userId, cluster, match);
+        const addedCount = await this.mergeClusterIntoAlbum(userId, cluster, kind, cityRu, match);
         if (addedCount > 0) {
           mergedWithChanges++;
           assetsAddedTotal += addedCount;
@@ -294,6 +294,8 @@ export class AutoTripService extends BaseService {
   private async mergeClusterIntoAlbum(
     userId: string,
     cluster: GpsAssetRow[],
+    kind: TripKind,
+    cityRu: Map<string, string>,
     album: { id: string; albumName: string; description: string; assetIds: Set<string>; watermark: Date },
   ): Promise<number> {
     const tripEnd = cluster[0].fileCreatedAt;
@@ -341,10 +343,21 @@ export class AutoTripService extends BaseService {
           `(user ${userId}, trip ${tripStart.toISOString().slice(0, 10)}..${tripEnd.toISOString().slice(0, 10)})`,
       );
     }
-    await this.autoTripRepository.updateAlbumDescription(
-      album.id,
-      replaceWatermark(album.description, new Date()),
-    );
+
+    // Re-title if our current naming scheme would produce something different
+    // AND the existing title still looks auto-generated (i.e. user didn't
+    // rename it manually). This lets us migrate old "<City> — <Month> <Year>"
+    // titles to the new day-range form without trampling user edits.
+    const newDescription = replaceWatermark(album.description, new Date());
+    const newTitle = this.titleForTrip(cluster, tripStart, kind, cityRu);
+    if (newTitle !== album.albumName && looksLikeAutoTitle(album.albumName)) {
+      await this.autoTripRepository.updateAlbumNameAndDescription(album.id, newTitle, newDescription);
+      this.logger.debug(
+        `Renamed auto-trip album "${album.albumName}" → "${newTitle}" (user ${userId})`,
+      );
+    } else {
+      await this.autoTripRepository.updateAlbumDescription(album.id, newDescription);
+    }
     return toAdd.length;
   }
 
@@ -709,12 +722,9 @@ export class AutoTripService extends BaseService {
     const dominantCountry = dominantCountryEn
       ? (COUNTRIES_RU[dominantCountryEn] ?? dominantCountryEn)
       : undefined;
-    // Multi-day → "Month Year". One-day → "DD month Year" so multiple
-    // day-trips to the same place in the same month don't collide.
-    const datePart =
-      kind === 'multi-day'
-        ? `${MONTHS_RU[startDate.getMonth()]} ${startDate.getFullYear()}`
-        : `${startDate.getDate()} ${MONTHS_RU_GEN[startDate.getMonth()]} ${startDate.getFullYear()}`;
+    // trip is sorted desc by fileCreatedAt; [0] is the end day.
+    const endDate = trip[0].fileCreatedAt;
+    const datePart = formatDatePart(startDate, endDate, kind);
     if (dominantCity && dominantCountry) {
       return `${dominantCity}, ${dominantCountry} — ${datePart}`;
     }
@@ -856,6 +866,60 @@ function findBestOverlappingAlbum<A extends { range: { start: Date; end: Date } 
     }
   }
   return bestIdx;
+}
+
+/**
+ * Build the date portion of a trip-album title.
+ *  - One-day trips: "5 июня 2026" — single day, genitive month.
+ *  - Multi-day in same month: "20–22 июля 2021" — day range, genitive month.
+ *  - Multi-day spanning months: "29 декабря 2024 – 4 января 2025" — full
+ *    range, each side with its own genitive month, so e.g. New Year's trips
+ *    read naturally without dropping the second month.
+ *
+ * Always includes day info so two trips to the same city in the same month
+ * get distinct titles (we hit this with two separate Dubrovnik stays in
+ * July 2021 producing identical "Дубровник, Croatia — Июль 2021").
+ */
+function formatDatePart(startDate: Date, endDate: Date, kind: TripKind): string {
+  const sDay = startDate.getDate();
+  const sMon = startDate.getMonth();
+  const sYear = startDate.getFullYear();
+  const eDay = endDate.getDate();
+  const eMon = endDate.getMonth();
+  const eYear = endDate.getFullYear();
+  if (kind === 'one-day' || (sDay === eDay && sMon === eMon && sYear === eYear)) {
+    return `${sDay} ${MONTHS_RU_GEN[sMon]} ${sYear}`;
+  }
+  if (sMon === eMon && sYear === eYear) {
+    return `${sDay}–${eDay} ${MONTHS_RU_GEN[sMon]} ${sYear}`;
+  }
+  if (sYear === eYear) {
+    return `${sDay} ${MONTHS_RU_GEN[sMon]} – ${eDay} ${MONTHS_RU_GEN[eMon]} ${sYear}`;
+  }
+  return `${sDay} ${MONTHS_RU_GEN[sMon]} ${sYear} – ${eDay} ${MONTHS_RU_GEN[eMon]} ${eYear}`;
+}
+
+/**
+ * Recognise an album title we generated automatically — used to decide
+ * whether it's safe to re-title an existing album when we change the
+ * format. If the user renamed an album manually, this returns false and
+ * we leave their name alone.
+ *
+ * Old format: "<city|country>[, <country>] — <Month> <Year>" (capitalised
+ * nominative month). New format always includes days. Anything not
+ * matching either is presumed user-edited.
+ */
+function looksLikeAutoTitle(title: string): boolean {
+  // Old format: ends with " — <Capital Month> YYYY"
+  const oldMonth = MONTHS_RU.join('|');
+  const oldRe = new RegExp(`\\s+—\\s+(?:${oldMonth})\\s+\\d{4}$`);
+  if (oldRe.test(title)) {
+    return true;
+  }
+  // New format: ends with " — <day stuff> <genitive-month> YYYY"
+  const newMonth = MONTHS_RU_GEN.join('|');
+  const newRe = new RegExp(`\\s+—\\s+.*(?:${newMonth}).*\\d{4}$`);
+  return newRe.test(title);
 }
 
 function topKey<K>(counts: Map<K, number>): K | undefined {
