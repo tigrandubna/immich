@@ -6,6 +6,10 @@
   import { mdiRenameOutline } from '@mdi/js';
   import { t } from 'svelte-i18n';
 
+  // Keep in sync with AUTO_DESCRIPTION_PREFIX in server/src/services/auto-trip.service.ts
+  // and AUTO_TRIP_DESCRIPTION_PREFIX in server/src/services/album.service.ts.
+  const AUTO_TRIP_DESCRIPTION_PREFIX = 'Auto-detected trip ·';
+
   type Props = {
     album: AlbumResponseDto;
     onClose: () => void;
@@ -16,8 +20,20 @@
   let albumName = $state(album.albumName);
   let description = $state(album.description);
 
+  // Auto-trip albums encode the trip's date range and last-scan watermark
+  // inside description; the detector needs those on every subsequent run to
+  // recognise the album and avoid creating duplicates. Editing the text
+  // breaks that, so the UI locks the field and explains why. Renaming and
+  // changing the cover still work.
+  const isAutoTripAlbum = (album.description ?? '').startsWith(AUTO_TRIP_DESCRIPTION_PREFIX);
+
   const onSubmit = async () => {
-    const success = await handleUpdateAlbum(album, { albumName, description });
+    const success = await handleUpdateAlbum(album, {
+      albumName,
+      // If the description is locked, always send back what was already
+      // there so the server doesn't reject the whole update.
+      description: isAutoTripAlbum ? album.description : description,
+    });
     if (success) {
       onClose();
     }
@@ -33,8 +49,12 @@
         <Input bind:value={albumName} />
       </Field>
 
-      <Field label={$t('description')}>
-        <Textarea bind:value={description} />
+      <Field
+        label={$t('description')}
+        description={isAutoTripAlbum ? $t('auto_trip_description_locked') : undefined}
+        disabled={isAutoTripAlbum}
+      >
+        <Textarea bind:value={description} disabled={isAutoTripAlbum} />
       </Field>
     </div>
   </div>

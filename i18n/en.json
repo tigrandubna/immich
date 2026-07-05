@@ -623,6 +623,7 @@
   "assets_were_part_of_album_count": "{count, plural, one {Asset was} other {Assets were}} already part of the album",
   "assets_were_part_of_albums_count": "{count, plural, one {Asset was} other {Assets were}} already part of the albums",
   "authorized_devices": "Authorized Devices",
+  "auto_trip_description_locked": "This album was created automatically. Its description stores data the trip detector needs on the next run and cannot be edited.",
   "automatic_endpoint_switching_subtitle": "Connect locally over designated Wi-Fi when available and use alternative connections elsewhere",
   "automatic_endpoint_switching_title": "Automatic URL switching",
   "autoplay_slideshow": "Autoplay slideshow",

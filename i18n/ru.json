@@ -619,6 +619,7 @@
   "assets_were_part_of_album_count": "{count, plural, one {# объект} many {# объектов} other {# объекта}} уже в альбоме",
   "assets_were_part_of_albums_count": "{count, plural, one {# объект} many {# объектов} other {# объекта}} уже в альбомах",
   "authorized_devices": "Авторизованные устройства",
+  "auto_trip_description_locked": "Этот альбом создан автоматически. В его описании хранится информация, нужная детектору поездок для следующего запуска — редактировать нельзя.",
   "automatic_endpoint_switching_subtitle": "Подключаться локально по выбранной сети и использовать альтернативные адреса в ином случае",
   "automatic_endpoint_switching_title": "Автоматическая смена URL",
   "autoplay_slideshow": "Автовоспроизведение",

@@ -18,6 +18,12 @@ import { MapMarkerResponseDto } from 'src/dtos/map.dto';
 import { AlbumUserRole, Permission } from 'src/enum';
 import { AlbumAssetCount, AlbumInfoOptions } from 'src/repositories/album.repository';
 import { BaseService } from 'src/services/base.service';
+
+// Same string the auto-trip detector stamps on every album it creates
+// (see AUTO_DESCRIPTION_PREFIX in auto-trip.service.ts). We check for it
+// here instead of importing the constant to avoid a service-to-service
+// dependency; a single-line comment on both sides keeps them in sync.
+const AUTO_TRIP_DESCRIPTION_PREFIX = 'Auto-detected trip ·';
 import { addAssets, removeAssets } from 'src/utils/asset.util';
 import { asDateString } from 'src/utils/date';
 import { getPreferences } from 'src/utils/preferences';
@@ -155,6 +161,22 @@ export class AlbumService extends BaseService {
         throw new BadRequestException('Invalid album thumbnail');
       }
     }
+
+    // The auto-trip detector encodes state it needs on subsequent runs (trip
+    // date range and last-scan watermark) inside the description. Editing
+    // that text breaks matching and produces duplicate albums, so we forbid
+    // description changes on auto-created albums. Renaming, changing the
+    // cover, and manual asset add/remove all still work normally.
+    if (
+      dto.description !== undefined &&
+      dto.description !== (album.description ?? '') &&
+      (album.description ?? '').startsWith(AUTO_TRIP_DESCRIPTION_PREFIX)
+    ) {
+      throw new BadRequestException(
+        'The description of an auto-detected trip album is managed by the detector and cannot be edited.',
+      );
+    }
+
     const updatedAlbum = await this.albumRepository.update(
       album.id,
       {
