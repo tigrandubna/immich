@@ -1,0 +1,70 @@
+# Standalone stack for the desktop app.
+#
+# Pulls the three custom images published by .github/workflows/standalone-build.yml
+# from GHCR — nothing is built on the user's machine. The Electron app renders an
+# .env next to this file and (when the user adds folders) a docker-compose.override.yml
+# that appends `/external/<name>` bind-mounts to the immich-server service.
+#
+# Run:  docker compose -f docker-compose.standalone.yml up -d
+# UI:   http://localhost:2283
+
+name: immich
+
+services:
+  immich-server:
+    container_name: immich_server
+    image: ghcr.io/tigrandubna/immich-server:${IMMICH_TAG:-latest}
+    volumes:
+      - ${UPLOAD_LOCATION}/photos:/data
+      # User-selected folders are appended here by docker-compose.override.yml
+      # as `- /host/path:/external/<name>:rw` (see the desktop app's folder config).
+    env_file:
+      - .env
+    ports:
+      - 2283:2283
+    depends_on:
+      - redis
+      - database
+    restart: always
+    healthcheck:
+      disable: false
+
+  immich-machine-learning:
+    container_name: immich_machine_learning
+    image: ghcr.io/tigrandubna/immich-machine-learning:${IMMICH_TAG:-latest}
+    volumes:
+      - model-cache:/cache
+    env_file:
+      - .env
+    restart: always
+    healthcheck:
+      disable: false
+
+  redis:
+    container_name: immich_redis
+    image: docker.io/valkey/valkey:9@sha256:3b55fbaa0cd93cf0d9d961f405e4dfcc70efe325e2d84da207a0a8e6d8fde4f9
+    healthcheck:
+      test: redis-cli ping || exit 1
+    restart: always
+
+  database:
+    container_name: immich_postgres
+    image: ghcr.io/tigrandubna/immich-postgres-ru:${IMMICH_TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_DB: ${DB_DATABASE_NAME}
+      POSTGRES_INITDB_ARGS: '--data-checksums --locale=ru_RU.UTF-8 --lc-collate=ru_RU.UTF-8 --lc-ctype=ru_RU.UTF-8 --encoding=UTF8'
+      LANG: ru_RU.UTF-8
+      LC_ALL: ru_RU.UTF-8
+    volumes:
+      - ${UPLOAD_LOCATION}/postgres:/var/lib/postgresql/data
+    shm_size: 128mb
+    restart: always
+    healthcheck:
+      disable: false
+
+volumes:
+  model-cache:

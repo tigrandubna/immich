@@ -1,0 +1,16 @@
+# EXAMPLE ONLY — the desktop app generates the real docker-compose.override.yml
+# from the user's folder list. Compose auto-loads a file named
+# docker-compose.override.yml sitting next to the base file and APPENDS these
+# volume entries to immich-server (list merge is keyed by container path).
+#
+# Each host folder the user picks becomes one line:  /host/path:/external/<name>:rw
+# Mount read-write so the server can write face regions to XMP sidecars.
+# The user then adds `/external/<name>` as an Import Path under
+# Administration -> External Libraries in the web UI (this step can later be
+# automated via the Immich API).
+
+services:
+  immich-server:
+    volumes:
+      - /Users/tigran/Dropbox/Canon:/external/Canon:rw
+      - /Users/tigran/Dropbox/iPhonePhotos:/external/iPhonePhotos:rw
