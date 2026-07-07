@@ -88,7 +88,15 @@ jobs:
           context: ${{ matrix.image.context }}
           file: ${{ matrix.image.file }}
           platforms: linux/${{ matrix.platform.arch }}
-          build-args: ${{ matrix.image.build-args }}
+          # BUILD_ID pins SvelteKit's kit.version.name (web/svelte.config.js).
+          # Without it the web build falls back to Date.now(), which is evaluated
+          # separately for the client chunks and the adapter-static index.html,
+          # producing mismatched __sveltekit_<hash> globals -> the app hangs on
+          # the loading screen. A fixed value keeps them in sync. (Harmless for
+          # the ML and postgres images, whose Dockerfiles ignore it.)
+          build-args: |
+            ${{ matrix.image.build-args }}
+            BUILD_ID=${{ needs.prepare.outputs.version }}
           provenance: false
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
