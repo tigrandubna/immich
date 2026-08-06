@@ -1,3 +1,4 @@
+import { parse as parsePath } from 'node:path';
 import { BinaryField, ExifDateTime } from 'exiftool-vendored';
 import { DateTime } from 'luxon';
 import { randomBytes } from 'node:crypto';
@@ -1423,6 +1424,7 @@ describe(MetadataService.name, () => {
             id: 'random-uuid',
             assetId: asset.id,
             personId: 'random-uuid',
+            excludedPersonId: null,
             imageHeight: 100,
             imageWidth: 1000,
             boundingBoxX1: 0,
@@ -1465,6 +1467,7 @@ describe(MetadataService.name, () => {
             id: 'random-uuid',
             assetId: asset.id,
             personId: person.id,
+            excludedPersonId: null,
             imageHeight: 100,
             imageWidth: 1000,
             boundingBoxX1: 0,
@@ -1554,6 +1557,7 @@ describe(MetadataService.name, () => {
                 id: 'random-uuid',
                 assetId: asset.id,
                 personId: 'random-uuid',
+                excludedPersonId: null,
                 imageWidth: imgW,
                 imageHeight: imgH,
                 boundingBoxX1: x1,
@@ -1966,6 +1970,12 @@ describe(MetadataService.name, () => {
   });
 
   describe('handleSidecarWrite', () => {
+    // With no sidecar on disk the fork targets the .xmp subfolder next to the
+    // original (metadata.faces.readFromSubfolder defaults to true).
+    const sidecarXmpPath = ({ originalPath }: { originalPath: string }) => {
+      const { dir, name } = parsePath(originalPath);
+      return `${dir}/.xmp/${name}.xmp`;
+    };
     it('should skip assets that no longer exist', async () => {
       mocks.assetJob.getLockedPropertiesForMetadataExtraction.mockResolvedValue([]);
       mocks.assetJob.getForSidecarWriteJob.mockResolvedValue(void 0);
@@ -2003,7 +2013,7 @@ describe(MetadataService.name, () => {
           id: asset.id,
         }),
       ).resolves.toBe(JobStatus.Success);
-      expect(mocks.metadata.writeTags).toHaveBeenCalledWith(asset.files[0].path, {
+      expect(mocks.metadata.writeTags).toHaveBeenCalledWith(sidecarXmpPath(asset), {
         DateTimeOriginal: date,
         Description: description,
         ImageDescription: description,
@@ -2026,7 +2036,7 @@ describe(MetadataService.name, () => {
       mocks.assetJob.getLockedPropertiesForMetadataExtraction.mockResolvedValue(['rating']);
       mocks.assetJob.getForSidecarWriteJob.mockResolvedValue(getForSidecarWrite(asset));
       await expect(sut.handleSidecarWrite({ id: asset.id })).resolves.toBe(JobStatus.Success);
-      expect(mocks.metadata.writeTags).toHaveBeenCalledWith(asset.files[0].path, { Rating: 4 });
+      expect(mocks.metadata.writeTags).toHaveBeenCalledWith(sidecarXmpPath(asset), { Rating: 4 });
       expect(mocks.asset.unlockProperties).toHaveBeenCalledWith(asset.id, ['rating']);
     });
 
@@ -2037,7 +2047,7 @@ describe(MetadataService.name, () => {
       mocks.assetJob.getLockedPropertiesForMetadataExtraction.mockResolvedValue(['rating']);
       mocks.assetJob.getForSidecarWriteJob.mockResolvedValue(getForSidecarWrite(asset));
       await expect(sut.handleSidecarWrite({ id: asset.id })).resolves.toBe(JobStatus.Success);
-      expect(mocks.metadata.writeTags).toHaveBeenCalledWith(asset.files[0].path, { Rating: 0 });
+      expect(mocks.metadata.writeTags).toHaveBeenCalledWith(sidecarXmpPath(asset), { Rating: 0 });
       expect(mocks.asset.unlockProperties).toHaveBeenCalledWith(asset.id, ['rating']);
     });
   });

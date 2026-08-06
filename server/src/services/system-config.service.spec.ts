@@ -104,7 +104,7 @@ const updatedConfig = Object.freeze<SystemConfig>({
   },
   metadata: {
     faces: {
-      import: false,
+      import: true,
       readFromSubfolder: true,
       writeFaces: false,
     },

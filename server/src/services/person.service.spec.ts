@@ -189,6 +189,7 @@ describe(PersonService.name, () => {
       const person = PersonFactory.create({ name: 'Person 1' });
 
       mocks.person.update.mockResolvedValue(person);
+      mocks.person.getFacesByPersonId.mockResolvedValue([]);
       mocks.access.person.checkOwnerAccess.mockResolvedValue(new Set([person.id]));
 
       await expect(sut.update(auth, person.id, { name: 'Person 1' })).resolves.toEqual(
@@ -892,6 +893,7 @@ describe(PersonService.name, () => {
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         { name: JobName.FacialRecognitionQueueAll, data: { force: false } },
         { name: JobName.FacialRecognition, data: { id: face.id } },
+        { name: JobName.FaceGenerateThumbnail, data: { id: face.id } },
       ]);
       expect(mocks.person.reassignFace).not.toHaveBeenCalled();
       expect(mocks.person.reassignFaces).not.toHaveBeenCalled();
@@ -935,6 +937,7 @@ describe(PersonService.name, () => {
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         { name: JobName.FacialRecognitionQueueAll, data: { force: false } },
         { name: JobName.FacialRecognition, data: { id: face.id } },
+        { name: JobName.FaceGenerateThumbnail, data: { id: face.id } },
       ]);
       expect(mocks.person.reassignFace).not.toHaveBeenCalled();
       expect(mocks.person.reassignFaces).not.toHaveBeenCalled();
@@ -973,6 +976,7 @@ describe(PersonService.name, () => {
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         { name: JobName.FacialRecognitionQueueAll, data: { force: false } },
         { name: JobName.FacialRecognition, data: { id: face.id } },
+        { name: JobName.FaceGenerateThumbnail, data: { id: face.id } },
       ]);
       expect(mocks.person.reassignFace).not.toHaveBeenCalled();
       expect(mocks.person.reassignFaces).not.toHaveBeenCalled();

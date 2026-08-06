@@ -120,6 +120,11 @@
         return { formattedBirthDate, formattedAge, ...person };
       }),
   );
+
+  // Recognised faces not attached to any person (never assigned, or detached
+  // via the X button). Sourced from faceManager since the asset DTO no longer
+  // carries faces.
+  const unassignedFaces = $derived(faceManager.data.filter((face) => !face.person));
 </script>
 
 {#if !authManager.isSharedLink && isOwner}
@@ -197,13 +202,13 @@
             highlighted={isHighlighted}
             class="outline-offset-2 outline-immich-primary group-focus-visible:outline-2 dark:outline-immich-dark-primary"
           />
-          {#if isOwner && person.faces.length > 0}
+          {#if isOwner && personFaces.length > 0}
             <button
               type="button"
               class="absolute top-1 right-1 hidden h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/30 opacity-0 transition-opacity hover:bg-black/50 focus:bg-black/50 focus:opacity-100 focus:outline-none group-hover:flex group-hover:opacity-100"
               aria-label={$t('remove')}
               title={$t('remove')}
-              onclick={(event) => handleRemovePersonFromAsset(event, person.faces)}
+              onclick={(event) => handleRemovePersonFromAsset(event, personFaces)}
             >
               <!--
                 Two pairs of <line>s: the first pair draws a wider black outline,

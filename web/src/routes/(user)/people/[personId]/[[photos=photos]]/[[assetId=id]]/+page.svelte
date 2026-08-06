@@ -677,7 +677,7 @@
         toastManager.primary(url);
       }
     } catch (error) {
-      handleError(error, $t('errors.unable_to_create_shared_link'));
+      handleError(error, $t('errors.failed_to_create_shared_link'));
     }
   };
 
