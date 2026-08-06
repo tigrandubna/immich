@@ -162,8 +162,8 @@ const assetEntity = Object.freeze({
   duration: null,
   files: [] as AssetFile[],
   exifInfo: {
-    latitude: 49.533_547,
-    longitude: 10.703_075,
+    latitude: 49.533547,
+    longitude: 10.703075,
   },
   livePhotoVideoId: null,
 } as MapAsset);
@@ -268,6 +268,10 @@ describe(AssetMediaService.name, () => {
         'random-uuid.jpg',
       );
     });
+
+    it('should accept filenames with just an extension', () => {
+      expect(sut.getUploadFilename(uploadFile.filename(UploadFieldName.ASSET_DATA, '.jpg'))).toEqual('random-uuid.jpg');
+    });
   });
 
   describe('getUploadFolder', () => {
@@ -338,7 +342,6 @@ describe(AssetMediaService.name, () => {
       });
 
       expect(mocks.asset.create).toHaveBeenCalled();
-      expect(mocks.user.updateUsage).toHaveBeenCalledWith(authStub.user1.user.id, file.size);
       expect(mocks.storage.utimes).toHaveBeenCalledWith(
         file.originalPath,
         expect.any(Date),

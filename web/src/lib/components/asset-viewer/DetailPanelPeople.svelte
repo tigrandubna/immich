@@ -3,6 +3,7 @@
   import { assetViewerManager } from '$lib/managers/asset-viewer-manager.svelte';
   import { authManager } from '$lib/managers/auth-manager.svelte';
   import { Route } from '$lib/route';
+  import { faceManager } from '$lib/stores/face.svelte';
   import { locale } from '$lib/stores/preferences.store';
   import { getPeopleThumbnailUrl } from '$lib/utils';
   import { handleError } from '$lib/utils/handle-error';
@@ -84,8 +85,7 @@
     }
   };
 
-  const unassignedFaces = $derived(asset.unassignedFaces || []);
-  const people = $derived(asset.people || []);
+  const people = $derived(Array.from(faceManager.people));
   const visiblePeople = $derived(
     people
       .filter((p) => assetViewerManager.isShowingHiddenPeople || !p.isHidden)
@@ -100,7 +100,8 @@
         let formattedAge;
         if (ageInYears < 0) {
           return { formattedBirthDate: undefined, formattedAge: undefined, ...person };
-        } else if (ageInMonths < 12) {
+        }
+        if (ageInMonths < 12) {
           formattedAge = $t('age_months', { values: { months: ageInMonths } });
         } else if (ageInMonths > 12 && ageInMonths < 24) {
           formattedAge = $t('age_year_months', { values: { months: ageInMonths - 12 } });
@@ -159,7 +160,7 @@
           onclick={() => assetViewerManager.toggleFaceEditMode()}
         />
 
-        {#if people.length > 0 || unassignedFaces.length > 0}
+        {#if faceManager.data.length > 0}
           <IconButton
             aria-label={$t('edit_people')}
             icon={mdiPencil}
@@ -175,15 +176,14 @@
 
     <div class="mt-2 grid {visiblePeople.length <= 6 ? 'grid-cols-3 gap-3' : 'grid-cols-4 gap-2'}">
       {#each visiblePeople as person (person.id)}
-        {@const isHighlighted = person.faces.some((f) =>
-          assetViewerManager.highlightedFaces.some((b) => b.id === f.id),
-        )}
+        {@const personFaces = faceManager.facesByPersonId.get(person.id) ?? []}
+        {@const isHighlighted = personFaces.some((f) => assetViewerManager.highlightedFaces.some((b) => b.id === f.id))}
         <a
           class="group relative outline-none"
           href={Route.viewPerson(person, { previousRoute })}
-          onfocus={() => assetViewerManager.setHighlightedFaces(person.faces)}
+          onfocus={() => assetViewerManager.setHighlightedFaces(personFaces)}
           onblur={() => assetViewerManager.clearHighlightedFaces()}
-          onpointerenter={() => assetViewerManager.setHighlightedFaces(person.faces)}
+          onpointerenter={() => assetViewerManager.setHighlightedFaces(personFaces)}
           onpointerleave={() => assetViewerManager.clearHighlightedFaces()}
         >
           <ImageThumbnail

@@ -11,6 +11,7 @@ import {
   asset_delete_audit,
   asset_face_audit,
   asset_metadata_audit,
+  asset_ocr_delete_audit,
   f_concat_ws,
   f_unaccent,
   immich_uuid_v7,
@@ -43,10 +44,12 @@ import { AssetFileTable } from 'src/schema/tables/asset-file.table';
 import { AssetJobStatusTable } from 'src/schema/tables/asset-job-status.table';
 import { AssetMetadataAuditTable } from 'src/schema/tables/asset-metadata-audit.table';
 import { AssetMetadataTable } from 'src/schema/tables/asset-metadata.table';
+import { AssetOcrAuditTable } from 'src/schema/tables/asset-ocr-audit.table';
 import { AssetOcrTable } from 'src/schema/tables/asset-ocr.table';
 import { AssetTable } from 'src/schema/tables/asset.table';
 import { FaceSearchTable } from 'src/schema/tables/face-search.table';
 import { GeodataPlacesTable } from 'src/schema/tables/geodata-places.table';
+import { IntegrityReportTable } from 'src/schema/tables/integrity-report.table';
 import { LibraryTable } from 'src/schema/tables/library.table';
 import { MemoryAssetAuditTable } from 'src/schema/tables/memory-asset-audit.table';
 import { MemoryAssetTable } from 'src/schema/tables/memory-asset.table';
@@ -60,7 +63,8 @@ import { PartnerAuditTable } from 'src/schema/tables/partner-audit.table';
 import { PartnerTable } from 'src/schema/tables/partner.table';
 import { PersonAuditTable } from 'src/schema/tables/person-audit.table';
 import { PersonTable } from 'src/schema/tables/person.table';
-import { PluginActionTable, PluginFilterTable, PluginTable } from 'src/schema/tables/plugin.table';
+import { PluginMethodTable } from 'src/schema/tables/plugin-method.table';
+import { PluginTable } from 'src/schema/tables/plugin.table';
 import { SessionTable } from 'src/schema/tables/session.table';
 import { SharedLinkAssetTable } from 'src/schema/tables/shared-link-asset.table';
 import { SharedLinkTable } from 'src/schema/tables/shared-link.table';
@@ -82,7 +86,8 @@ import {
   VideoStreamSessionTable,
   VideoStreamVariantTable,
 } from 'src/schema/tables/video-stream.table';
-import { WorkflowActionTable, WorkflowFilterTable, WorkflowTable } from 'src/schema/tables/workflow.table';
+import { WorkflowStepTable } from 'src/schema/tables/workflow-step.table';
+import { WorkflowTable } from 'src/schema/tables/workflow.table';
 
 @Extensions(['uuid-ossp', 'unaccent', 'cube', 'earthdistance', 'pg_trgm', 'plpgsql'])
 @Database({ name: 'immich' })
@@ -105,11 +110,13 @@ export class ImmichDatabase {
     AssetMetadataAuditTable,
     AssetJobStatusTable,
     AssetOcrTable,
+    AssetOcrAuditTable,
     AssetTable,
     AssetFileTable,
     AssetExifTable,
     FaceSearchTable,
     GeodataPlacesTable,
+    IntegrityReportTable,
     LibraryTable,
     MemoryTable,
     MemoryAuditTable,
@@ -143,11 +150,9 @@ export class ImmichDatabase {
     VideoStreamVariantTable,
     VideoStreamSegmentTable,
     PluginTable,
-    PluginFilterTable,
-    PluginActionTable,
+    PluginMethodTable,
     WorkflowTable,
-    WorkflowFilterTable,
-    WorkflowActionTable,
+    WorkflowStepTable,
   ];
 
   functions = [
@@ -168,6 +173,7 @@ export class ImmichDatabase {
     user_metadata_audit,
     asset_metadata_audit,
     asset_face_audit,
+    asset_ocr_delete_audit,
   ];
 
   enum = [album_user_role_enum, assets_status_enum, asset_face_source_type, asset_visibility_enum];
@@ -205,6 +211,7 @@ export interface DB {
   asset_metadata_audit: AssetMetadataAuditTable;
   asset_job_status: AssetJobStatusTable;
   asset_ocr: AssetOcrTable;
+  asset_ocr_audit: AssetOcrAuditTable;
   asset_audio: AssetAudioTable;
   asset_video: AssetVideoTable;
   asset_keyframe: AssetKeyframeTable;
@@ -213,6 +220,8 @@ export interface DB {
   face_search: FaceSearchTable;
 
   geodata_places: GeodataPlacesTable;
+
+  integrity_report: IntegrityReportTable;
 
   library: LibraryTable;
 
@@ -264,10 +273,8 @@ export interface DB {
   video_stream_segment: VideoStreamSegmentTable;
 
   plugin: PluginTable;
-  plugin_filter: PluginFilterTable;
-  plugin_action: PluginActionTable;
+  plugin_method: PluginMethodTable;
 
   workflow: WorkflowTable;
-  workflow_filter: WorkflowFilterTable;
-  workflow_action: WorkflowActionTable;
+  workflow_step: WorkflowStepTable;
 }

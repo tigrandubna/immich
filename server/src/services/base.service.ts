@@ -23,6 +23,7 @@ import { DownloadRepository } from 'src/repositories/download.repository';
 import { DuplicateRepository } from 'src/repositories/duplicate.repository';
 import { EmailRepository } from 'src/repositories/email.repository';
 import { EventRepository } from 'src/repositories/event.repository';
+import { IntegrityRepository } from 'src/repositories/integrity.repository';
 import { JobRepository } from 'src/repositories/job.repository';
 import { LibraryRepository } from 'src/repositories/library.repository';
 import { LoggingRepository } from 'src/repositories/logging.repository';
@@ -59,6 +60,7 @@ import { ViewRepository } from 'src/repositories/view-repository';
 import { WebsocketRepository } from 'src/repositories/websocket.repository';
 import { WorkflowRepository } from 'src/repositories/workflow.repository';
 import { UserTable } from 'src/schema/tables/user.table';
+import { ClassConstructor } from 'src/types';
 import { AccessRequest, checkAccess, requireAccess } from 'src/utils/access';
 import { getConfig, updateConfig } from 'src/utils/config';
 
@@ -82,6 +84,7 @@ export const BASE_SERVICE_DEPENDENCIES = [
   DuplicateRepository,
   EmailRepository,
   EventRepository,
+  IntegrityRepository,
   JobRepository,
   LibraryRepository,
   MachineLearningRepository,
@@ -142,6 +145,7 @@ export class BaseService {
     protected duplicateRepository: DuplicateRepository,
     protected emailRepository: EmailRepository,
     protected eventRepository: EventRepository,
+    protected integrityRepository: IntegrityRepository,
     protected jobRepository: JobRepository,
     protected libraryRepository: LibraryRepository,
     protected machineLearningRepository: MachineLearningRepository,
@@ -188,6 +192,69 @@ export class BaseService {
       systemMetadataRepository,
       this.logger,
     );
+  }
+
+  static create<T extends BaseService>(Service: ClassConstructor<T>, ctx: BaseService) {
+    const service = new Service(
+      LoggingRepository.create(),
+      ctx.accessRepository,
+      ctx.activityRepository,
+      ctx.albumRepository,
+      ctx.albumUserRepository,
+      ctx.apiKeyRepository,
+      ctx.appRepository,
+      ctx.assetRepository,
+      ctx.assetEditRepository,
+      ctx.assetJobRepository,
+      ctx.autoTripRepository,
+      ctx.configRepository,
+      ctx.cronRepository,
+      ctx.cryptoRepository,
+      ctx.databaseRepository,
+      ctx.downloadRepository,
+      ctx.duplicateRepository,
+      ctx.emailRepository,
+      ctx.eventRepository,
+      ctx.integrityRepository,
+      ctx.jobRepository,
+      ctx.libraryRepository,
+      ctx.machineLearningRepository,
+      ctx.mapRepository,
+      ctx.mediaRepository,
+      ctx.memoryRepository,
+      ctx.metadataRepository,
+      ctx.moveRepository,
+      ctx.notificationRepository,
+      ctx.oauthRepository,
+      ctx.ocrRepository,
+      ctx.partnerRepository,
+      ctx.personRepository,
+      ctx.pluginRepository,
+      ctx.processRepository,
+      ctx.searchRepository,
+      ctx.serverInfoRepository,
+      ctx.sessionRepository,
+      ctx.sharedLinkRepository,
+      ctx.sharedLinkAssetRepository,
+      ctx.stackRepository,
+      ctx.storageRepository,
+      ctx.syncRepository,
+      ctx.syncCheckpointRepository,
+      ctx.systemMetadataRepository,
+      ctx.tagRepository,
+      ctx.telemetryRepository,
+      ctx.trashRepository,
+      ctx.userRepository,
+      ctx.versionRepository,
+      ctx.videoStreamRepository,
+      ctx.viewRepository,
+      ctx.websocketRepository,
+      ctx.workflowRepository,
+    );
+
+    service.logger.setContext(BaseService.name);
+
+    return service as T;
   }
 
   get worker() {

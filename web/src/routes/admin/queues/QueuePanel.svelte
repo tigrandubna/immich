@@ -109,6 +109,7 @@
           break;
         }
       }
+      // no default
     }
 
     try {
@@ -120,6 +121,7 @@
           toastManager.primary($t('admin.cleared_jobs', { values: { job: item.title } }));
           break;
         }
+        // no default
       }
     } catch (error) {
       handleError(error, $t('admin.failed_job_command', { values: { command: dto.command, job: item.title } }));

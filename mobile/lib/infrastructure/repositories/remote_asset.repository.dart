@@ -10,6 +10,7 @@ import 'package:immich_mobile/infrastructure/entities/remote_asset.entity.dart';
 import 'package:immich_mobile/infrastructure/entities/remote_asset.entity.drift.dart';
 import 'package:immich_mobile/infrastructure/entities/stack.entity.drift.dart';
 import 'package:immich_mobile/infrastructure/repositories/db.repository.dart';
+import 'package:immich_mobile/utils/option.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 class RemoteAssetRepository extends DriftDatabaseRepository {
@@ -164,39 +165,20 @@ class RemoteAssetRepository extends DriftDatabaseRepository {
     });
   }
 
+  Future<void> emptyTrash(String ownerId) async {
+    await _db.remoteAssetEntity.deleteWhere((t) => t.deletedAt.isNotNull() & t.ownerId.equals(ownerId));
+  }
+
+  Future<void> restoreAllTrash(String ownerId) async {
+    await (_db.remoteAssetEntity.update()..where((t) => t.deletedAt.isNotNull() & t.ownerId.equals(ownerId))).write(
+      const RemoteAssetEntityCompanion(deletedAt: Value(null)),
+    );
+  }
+
   Future<void> delete(List<String> ids) {
     return _db.batch((batch) {
       for (final id in ids) {
         batch.deleteWhere(_db.remoteAssetEntity, (row) => row.id.equals(id));
-      }
-    });
-  }
-
-  Future<void> updateLocation(List<String> ids, LatLng location) {
-    return _db.batch((batch) async {
-      for (final id in ids) {
-        batch.update(
-          _db.remoteExifEntity,
-          RemoteExifEntityCompanion(latitude: Value(location.latitude), longitude: Value(location.longitude)),
-          where: (e) => e.assetId.equals(id),
-        );
-      }
-    });
-  }
-
-  Future<void> updateDateTime(List<String> ids, DateTime dateTime) {
-    return _db.batch((batch) async {
-      for (final id in ids) {
-        batch.update(
-          _db.remoteExifEntity,
-          RemoteExifEntityCompanion(dateTimeOriginal: Value(dateTime)),
-          where: (e) => e.assetId.equals(id),
-        );
-        batch.update(
-          _db.remoteAssetEntity,
-          RemoteAssetEntityCompanion(createdAt: Value(dateTime)),
-          where: (e) => e.id.equals(id),
-        );
       }
     });
   }
@@ -257,7 +239,7 @@ class RemoteAssetRepository extends DriftDatabaseRepository {
     );
   }
 
-  Future<void> updateRating(String assetId, int rating) async {
+  Future<void> updateRating(String assetId, int? rating) async {
     await (_db.remoteExifEntity.update()..where((row) => row.assetId.equals(assetId))).write(
       RemoteExifEntityCompanion(rating: Value(rating)),
     );
@@ -272,5 +254,60 @@ class RemoteAssetRepository extends DriftDatabaseRepository {
       ..where((row) => row.assetId.equals(assetId) & row.action.equals(AssetEditAction.other.index).not())
       ..orderBy([(row) => OrderingTerm.asc(row.sequence)]);
     return query.map((row) => row.toDto()!).get();
+  }
+
+  Future<void> update(
+    List<String> remoteIds, {
+    Option<bool> isFavorite = const .none(),
+    Option<AssetVisibility> visibility = const .none(),
+    Option<DateTime> createdAt = const .none(),
+  }) async {
+    if ([isFavorite, visibility, createdAt].every((option) => option.isNone)) {
+      return;
+    }
+
+    final companion = RemoteAssetEntityCompanion(
+      visibility: visibility.toDriftValue(),
+      isFavorite: isFavorite.toDriftValue(),
+      createdAt: createdAt.toDriftValue(),
+    );
+    return _db.batch((batch) {
+      for (final remoteId in remoteIds) {
+        batch.update(_db.remoteAssetEntity, companion, where: (e) => e.id.equals(remoteId));
+      }
+    });
+  }
+
+  // TODO(shenlong): remove after action migration
+  Future<void> updateLocation(List<String> ids, LatLng location) {
+    return _db.batch((batch) async {
+      for (final id in ids) {
+        batch.update(
+          _db.remoteExifEntity,
+          RemoteExifEntityCompanion(latitude: Value(location.latitude), longitude: Value(location.longitude)),
+          where: (e) => e.assetId.equals(id),
+        );
+      }
+    });
+  }
+
+  Future<void> updateDateTime(List<String> ids, DateTime dateTime, {String? timeZone}) {
+    return _db.batch((batch) async {
+      for (final id in ids) {
+        batch.update(
+          _db.remoteExifEntity,
+          RemoteExifEntityCompanion(
+            dateTimeOriginal: Value(dateTime),
+            timeZone: timeZone == null ? const Value.absent() : Value(timeZone),
+          ),
+          where: (e) => e.assetId.equals(id),
+        );
+        batch.update(
+          _db.remoteAssetEntity,
+          RemoteAssetEntityCompanion(createdAt: Value(dateTime)),
+          where: (e) => e.id.equals(id),
+        );
+      }
+    });
   }
 }

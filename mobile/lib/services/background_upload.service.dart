@@ -13,16 +13,16 @@ import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/extensions/platform_extensions.dart';
 import 'package:immich_mobile/infrastructure/repositories/backup.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/local_asset.repository.dart';
+import 'package:immich_mobile/infrastructure/repositories/settings.repository.dart';
 import 'package:immich_mobile/infrastructure/repositories/storage.repository.dart';
-import 'package:immich_mobile/providers/app_settings.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/asset.provider.dart';
 import 'package:immich_mobile/providers/infrastructure/storage.provider.dart';
 import 'package:immich_mobile/repositories/asset_media.repository.dart';
 import 'package:immich_mobile/repositories/upload.repository.dart';
 import 'package:immich_mobile/services/api.service.dart';
-import 'package:immich_mobile/services/app_settings.service.dart';
 import 'package:immich_mobile/utils/debug_print.dart';
 import 'package:logging/logging.dart';
+import 'package:openapi/api.dart' as api;
 import 'package:path/path.dart' as p;
 
 final backgroundUploadServiceProvider = Provider((ref) {
@@ -31,7 +31,6 @@ final backgroundUploadServiceProvider = Provider((ref) {
     ref.watch(storageRepositoryProvider),
     ref.watch(localAssetRepository),
     ref.watch(backupRepositoryProvider),
-    ref.watch(appSettingsServiceProvider),
     ref.watch(assetMediaRepositoryProvider),
   );
 
@@ -82,7 +81,9 @@ class UploadTaskMetadata {
 
   @override
   bool operator ==(covariant UploadTaskMetadata other) {
-    if (identical(this, other)) return true;
+    if (identical(this, other)) {
+      return true;
+    }
 
     return other.localAssetId == localAssetId &&
         other.isLivePhotos == isLivePhotos &&
@@ -103,7 +104,6 @@ class BackgroundUploadService {
     this._storageRepository,
     this._localAssetRepository,
     this._backupRepository,
-    this._appSettingsService,
     this._assetMediaRepository,
   ) {
     _uploadRepository.onUploadStatus = _onUploadCallback;
@@ -114,7 +114,6 @@ class BackgroundUploadService {
   final StorageRepository _storageRepository;
   final DriftLocalAssetRepository _localAssetRepository;
   final DriftBackupRepository _backupRepository;
-  final AppSettingsService _appSettingsService;
   final AssetMediaRepository _assetMediaRepository;
   final Logger _logger = Logger('BackgroundUploadService');
 
@@ -291,13 +290,10 @@ class BackgroundUploadService {
       return null;
     }
 
-    String fileName = await _assetMediaRepository.getOriginalFilename(asset.id) ?? asset.name;
-    final hasExtension = p.extension(fileName).isNotEmpty;
-    if (!hasExtension) {
-      fileName = p.setExtension(fileName, p.extension(asset.name));
-    }
-
-    final originalFileName = entity.isLivePhoto ? p.setExtension(fileName, p.extension(file.path)) : fileName;
+    final fileName = await _assetMediaRepository.getOriginalFilename(asset.id) ?? asset.name;
+    // Some apps (e.g. DJI/Fusion) return names without an extension; fall back to the asset name for those.
+    final extension = p.extension(file.path).isNotEmpty ? p.extension(file.path) : p.extension(asset.name);
+    final originalFileName = p.setExtension(fileName, extension);
 
     String metadata = UploadTaskMetadata(
       localAssetId: asset.id,
@@ -318,6 +314,8 @@ class BackgroundUploadService {
       priority: priority,
       isFavorite: asset.isFavorite,
       requiresWiFi: requiresWiFi,
+      // Visibility hidden on upload to prevent the server from running regular jobs on the live photo asset
+      fields: entity.isLivePhoto ? {'visibility': api.AssetVisibility.hidden.toString()} : null,
       cloudId: entity.isLivePhoto ? null : asset.cloudId,
       adjustmentTime: entity.isLivePhoto ? null : asset.adjustmentTime?.toIso8601String(),
       latitude: entity.isLivePhoto ? null : asset.latitude?.toString(),
@@ -361,15 +359,14 @@ class BackgroundUploadService {
   }
 
   bool _shouldRequireWiFi(LocalAsset asset) {
-    bool requiresWiFi = true;
-
-    if (asset.isVideo && _appSettingsService.getSetting(AppSettingsEnum.useCellularForUploadVideos)) {
-      requiresWiFi = false;
-    } else if (!asset.isVideo && _appSettingsService.getSetting(AppSettingsEnum.useCellularForUploadPhotos)) {
-      requiresWiFi = false;
+    final backup = SettingsRepository.instance.appConfig.backup;
+    if (asset.isVideo && backup.useCellularForVideos) {
+      return false;
     }
-
-    return requiresWiFi;
+    if (!asset.isVideo && backup.useCellularForPhotos) {
+      return false;
+    }
+    return true;
   }
 
   Future<UploadTask> buildUploadTask(
@@ -396,6 +393,7 @@ class BackgroundUploadService {
     final (baseDirectory, directory, filename) = await Task.split(filePath: file.path);
     final fieldsMap = {
       'filename': originalFileName ?? filename,
+      // deviceAssetId/deviceId required by server v2.7.5 and below (drop in v4.0 per #27818).
       'deviceAssetId': deviceAssetId ?? '',
       'deviceId': deviceId,
       'fileCreatedAt': createdAt.toUtc().toIso8601String(),

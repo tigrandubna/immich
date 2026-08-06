@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DateTime } from 'luxon';
+import { Memory } from 'src/database';
 import { OnJob } from 'src/decorators';
 import { BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
@@ -71,7 +72,9 @@ export class MemoryService extends BaseService {
 
   async search(auth: AuthDto, dto: MemorySearchDto) {
     const memories = await this.memoryRepository.search(auth.user.id, dto);
-    return memories.map((memory) => mapMemory(memory, auth));
+    return memories
+      .filter((memory: Memory) => memory.assets && memory.assets.length > 0)
+      .map((memory: Memory) => mapMemory(memory, auth));
   }
 
   statistics(auth: AuthDto, dto: MemorySearchDto) {
@@ -133,7 +136,7 @@ export class MemoryService extends BaseService {
     const repos = { access: this.accessRepository, bulk: this.memoryRepository };
     const results = await addAssets(auth, repos, { parentId: id, assetIds: dto.ids });
 
-    const hasSuccess = results.find(({ success }) => success);
+    const hasSuccess = results.some(({ success }) => success);
     if (hasSuccess) {
       await this.memoryRepository.update(id, { updatedAt: new Date() });
     }
@@ -151,7 +154,7 @@ export class MemoryService extends BaseService {
       canAlwaysRemove: Permission.MemoryDelete,
     });
 
-    const hasSuccess = results.find(({ success }) => success);
+    const hasSuccess = results.some(({ success }) => success);
     if (hasSuccess) {
       await this.memoryRepository.update(id, { id, updatedAt: new Date() });
     }

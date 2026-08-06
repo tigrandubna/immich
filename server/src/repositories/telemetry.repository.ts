@@ -14,7 +14,7 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic
 import { snakeCase, startCase } from 'lodash';
 import { MetricService } from 'nestjs-otel';
 import { copyMetadataFromFunctionToFunction } from 'nestjs-otel/lib/opentelemetry.utils';
-import { serverVersion } from 'src/constants';
+import { excludePaths, serverVersion } from 'src/constants';
 import { ImmichTelemetry, MetadataKey } from 'src/enum';
 import { ConfigRepository } from 'src/repositories/config.repository';
 import { LoggingRepository } from 'src/repositories/logging.repository';
@@ -60,6 +60,9 @@ export const bootstrapTelemetry = (port: number) => {
   if (instance) {
     throw new Error('OpenTelemetry SDK already started');
   }
+
+  const { telemetry } = new ConfigRepository().getEnv();
+
   instance = new NodeSDK({
     resource: resourceFromAttributes({
       [ATTR_SERVICE_NAME]: `immich`,
@@ -68,7 +71,10 @@ export const bootstrapTelemetry = (port: number) => {
     metricReader: new PrometheusExporter({ port }),
     contextManager: new AsyncLocalStorageContextManager(),
     instrumentations: [
-      new HttpInstrumentation(),
+      new HttpInstrumentation({
+        enabled: telemetry.metrics.has(ImmichTelemetry.Api),
+        ignoreIncomingRequestHook: (request) => excludePaths.some((item) => request.url?.startsWith(item)),
+      }),
       new IORedisInstrumentation(),
       new NestInstrumentation(),
       new PgInstrumentation(),
@@ -89,10 +95,12 @@ export const bootstrapTelemetry = (port: number) => {
 };
 
 export const teardownTelemetry = async () => {
-  if (instance) {
-    await instance.shutdown();
-    instance = undefined;
+  if (!instance) {
+    return;
   }
+
+  await instance.shutdown();
+  instance = undefined;
 };
 
 @Injectable()
@@ -147,7 +155,7 @@ export class TelemetryRepository {
       }
 
       const method = descriptor.value;
-      const propertyName = snakeCase(String(propName));
+      const propertyName = snakeCase(propName);
       const metricName = `${snakeCase(className).replaceAll(/_(?=(repository)|(controller)|(provider)|(service)|(module))/g, '.')}.${propertyName}.duration`;
 
       const histogram = this.metricService.getHistogram(metricName, {
@@ -159,6 +167,7 @@ export class TelemetryRepository {
 
       descriptor.value = function (...args: any[]) {
         const start = performance.now();
+        // eslint-disable-next-line unicorn/no-this-outside-of-class
         const result = method.apply(this, args);
 
         void Promise.resolve(result)

@@ -8,6 +8,7 @@ export const newMetadataRepositoryMock = (): Mocked<RepositoryInterface<Metadata
     teardown: vitest.fn(),
     readTags: vitest.fn(),
     writeTags: vitest.fn(),
+    writeFaceRegions: vitest.fn(),
     extractBinaryTag: vitest.fn(),
   };
 };

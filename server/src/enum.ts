@@ -1,3 +1,4 @@
+import { WorkflowTrigger } from '@immich/plugin-sdk';
 import z from 'zod';
 
 export enum AuthType {
@@ -23,6 +24,8 @@ export enum ImmichHeader {
   SharedLinkSlug = 'x-immich-share-slug',
   Checksum = 'x-immich-checksum',
   CorrelationId = 'X-Correlation-ID',
+  HlsInitSegment = 'x-immich-hls-msn',
+  HlsPosition = 'x-immich-hls-pos',
 }
 
 export enum ImmichQuery {
@@ -73,6 +76,13 @@ export enum AssetOrder {
 }
 
 export const AssetOrderSchema = z.enum(AssetOrder).describe('Asset sort order').meta({ id: 'AssetOrder' });
+
+export enum AssetOrderBy {
+  TakenAt = 'takenAt',
+  CreatedAt = 'createdAt',
+}
+
+export const AssetOrderBySchema = z.enum(AssetOrderBy).describe('Asset sorting property').meta({ id: 'AssetOrderBy' });
 
 export enum MemoryType {
   /** pictures taken on this day X years ago */
@@ -338,6 +348,7 @@ export enum SystemMetadataKey {
   SystemFlags = 'system-flags',
   VersionCheckState = 'version-check-state',
   License = 'license',
+  IntegrityChecksumCheckpoint = 'integrity-checksum-checkpoint',
 }
 
 export enum UserMetadataKey {
@@ -395,6 +406,17 @@ export enum SourceType {
 
 export const SourceTypeSchema = z.enum(SourceType).describe('Face detection source type').meta({ id: 'SourceType' });
 
+export enum IntegrityReport {
+  UntrackedFile = 'untracked_file',
+  MissingFile = 'missing_file',
+  ChecksumFail = 'checksum_mismatch',
+}
+
+export const IntegrityReportSchema = z
+  .enum(IntegrityReport)
+  .describe('Integrity report type')
+  .meta({ id: 'IntegrityReport' });
+
 export enum ManualJobName {
   PersonCleanup = 'person-cleanup',
   TagCleanup = 'tag-cleanup',
@@ -405,6 +427,15 @@ export enum ManualJobName {
   RewriteFaceSidecars = 'rewrite-face-sidecars',
   DeduplicateAssetFaces = 'deduplicate-asset-faces',
   DetectRecentTrips = 'detect-recent-trips',
+  IntegrityMissingFiles = `integrity-missing-files`,
+  IntegrityUntrackedFiles = `integrity-untracked-files`,
+  IntegrityChecksumFiles = `integrity-checksum-mismatch`,
+  IntegrityMissingFilesRefresh = `integrity-missing-files-refresh`,
+  IntegrityUntrackedFilesRefresh = `integrity-untracked-files-refresh`,
+  IntegrityChecksumFilesRefresh = `integrity-checksum-mismatch-refresh`,
+  IntegrityMissingFilesDeleteAll = `integrity-missing-files-delete-all`,
+  IntegrityUntrackedFilesDeleteAll = `integrity-untracked-files-delete-all`,
+  IntegrityChecksumFilesDeleteAll = `integrity-checksum-mismatch-delete-all`,
 }
 
 export const ManualJobNameSchema = z.enum(ManualJobName).describe('Manual job name').meta({ id: 'ManualJobName' });
@@ -453,17 +484,11 @@ export enum VideoCodec {
 
 export const VideoCodecSchema = z.enum(VideoCodec).describe('Target video codec').meta({ id: 'VideoCodec' });
 
-export enum VideoSegmentCodec {
-  Av1 = 'av1',
-  Hevc = 'hevc',
-  H264 = 'h264',
-}
+export type VideoSegmentCodec = VideoCodec.Av1 | VideoCodec.Hevc | VideoCodec.H264;
 
 export enum AudioCodec {
   Mp3 = 'mp3',
   Aac = 'aac',
-  /** @deprecated Use `Opus` instead */
-  Libopus = 'libopus',
   Opus = 'opus',
   PcmS16le = 'pcm_s16le',
 }
@@ -511,6 +536,19 @@ export enum CQMode {
 }
 
 export const CQModeSchema = z.enum(CQMode).describe('CQ mode').meta({ id: 'CQMode' });
+
+export enum HlsVideoResolution {
+  p480 = 480,
+  p720 = 720,
+  p1080 = 1080,
+  p1440 = 1440,
+  p2160 = 2160,
+}
+
+export const HlsVideoResolutionSchema = z
+  .enum(HlsVideoResolution)
+  .describe('HLS video resolution')
+  .meta({ id: 'HlsVideoResolution', type: 'integer' });
 
 export enum Colorspace {
   Srgb = 'srgb',
@@ -752,8 +790,11 @@ export enum BootstrapEventPriority {
   StorageService = -195,
   // Other services may need to queue jobs on bootstrap.
   JobService = -190,
-  // Initialise config after other bootstrap services, stop other services from using config on bootstrap
+  // Initialize config after other bootstrap services, stop other services from using config on bootstrap
   SystemConfig = 100,
+  PluginSync = 190,
+  // Load plugins into memory after sync
+  PluginLoad = 200,
 }
 
 export enum QueueName {
@@ -775,6 +816,7 @@ export enum QueueName {
   BackupDatabase = 'backupDatabase',
   Ocr = 'ocr',
   Workflow = 'workflow',
+  IntegrityCheck = 'integrityCheck',
   Editor = 'editor',
 }
 
@@ -827,6 +869,8 @@ export enum JobName {
   LibrarySyncFiles = 'LibrarySyncFiles',
   LibraryScanQueueAll = 'LibraryScanQueueAll',
 
+  HlsSessionCleanup = 'HlsSessionCleanup',
+
   MemoryCleanup = 'MemoryCleanup',
   MemoryGenerate = 'MemoryGenerate',
 
@@ -874,7 +918,19 @@ export enum JobName {
   Ocr = 'Ocr',
 
   // Workflow
-  WorkflowRun = 'WorkflowRun',
+  WorkflowAssetTrigger = 'WorkflowAssetTrigger',
+
+  // Integrity
+  IntegrityUntrackedFilesQueueAll = 'IntegrityUntrackedFilesQueueAll',
+  IntegrityUntrackedFiles = 'IntegrityUntrackedFiles',
+  IntegrityUntrackedFilesRefresh = 'IntegrityUntrackedRefresh',
+  IntegrityMissingFilesQueueAll = 'IntegrityMissingFilesQueueAll',
+  IntegrityMissingFiles = 'IntegrityMissingFiles',
+  IntegrityMissingFilesRefresh = 'IntegrityMissingFilesRefresh',
+  IntegrityChecksumFiles = 'IntegrityChecksumFiles',
+  IntegrityChecksumFilesRefresh = 'IntegrityChecksumFilesRefresh',
+  IntegrityDeleteReportType = 'IntegrityDeleteReportType',
+  IntegrityDeleteReports = 'IntegrityDeleteReports',
 }
 
 export const JobNameSchema = z.enum(JobName).describe('Job name').meta({ id: 'JobName' });
@@ -920,12 +976,15 @@ export enum DatabaseLock {
   CLIPDimSize = 512,
   Library = 1337,
   NightlyJobs = 600,
+  PluginImport = 666,
   MediaLocation = 700,
   GetSystemConfig = 69,
   BackupDatabase = 42,
   MaintenanceOperation = 621,
   MemoryCreation = 777,
+  IntegrityCheck = 67,
   VersionCheck = 800,
+  HlsSessionCleanup = 850,
   AutoTripDetect = 900,
 }
 
@@ -960,6 +1019,7 @@ export enum SyncRequestType {
   AssetExifsV1 = 'AssetExifsV1',
   AssetEditsV1 = 'AssetEditsV1',
   AssetMetadataV1 = 'AssetMetadataV1',
+  AssetOcrV1 = 'AssetOcrV1',
   AuthUsersV1 = 'AuthUsersV1',
   MemoriesV1 = 'MemoriesV1',
   MemoryToAssetsV1 = 'MemoryToAssetsV1',
@@ -998,6 +1058,8 @@ export enum SyncEntityType {
   AssetEditDeleteV1 = 'AssetEditDeleteV1',
   AssetMetadataV1 = 'AssetMetadataV1',
   AssetMetadataDeleteV1 = 'AssetMetadataDeleteV1',
+  AssetOcrV1 = 'AssetOcrV1',
+  AssetOcrDeleteV1 = 'AssetOcrDeleteV1',
 
   PartnerV1 = 'PartnerV1',
   PartnerDeleteV1 = 'PartnerDeleteV1',
@@ -1136,6 +1198,7 @@ export enum ApiTag {
   Download = 'Download',
   Duplicates = 'Duplicates',
   Faces = 'Faces',
+  Integrity = 'Integrity (admin)',
   Jobs = 'Jobs',
   Libraries = 'Libraries',
   Maintenance = 'Maintenance (admin)',
@@ -1172,12 +1235,28 @@ export enum PluginContext {
 
 export const PluginContextSchema = z.enum(PluginContext).describe('Plugin context').meta({ id: 'PluginContextType' });
 
-export enum PluginTriggerType {
-  AssetCreate = 'AssetCreate',
-  PersonRecognized = 'PersonRecognized',
+export const WorkflowTriggerSchema = z
+  .enum(WorkflowTrigger)
+  .describe('Plugin trigger type')
+  .meta({ id: 'WorkflowTrigger' });
+
+export enum WorkflowType {
+  AssetV1 = 'AssetV1',
+  // AssetPersonV1 = 'AssetPersonV1',
 }
 
-export const PluginTriggerTypeSchema = z
-  .enum(PluginTriggerType)
-  .describe('Plugin trigger type')
-  .meta({ id: 'PluginTriggerType' });
+export const WorkflowTypeSchema = z.enum(WorkflowType).describe('Workflow type').meta({ id: 'WorkflowType' });
+
+export enum CalendarHeatmapType {
+  Upload = 'Upload',
+  Taken = 'Taken',
+}
+
+export enum SearchOrderField {
+  FileCreatedAt = 'fileCreatedAt',
+  LocalDateTime = 'localDateTime',
+  FileSizeInBytes = 'fileSizeInBytes',
+  Rating = 'rating',
+}
+
+export const SearchOrderFieldSchema = z.enum(SearchOrderField).meta({ id: 'SearchOrderField' });

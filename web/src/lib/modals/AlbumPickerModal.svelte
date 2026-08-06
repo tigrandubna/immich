@@ -21,18 +21,15 @@
   let search = $state('');
   let selectedRowIndex: number = $state(-1);
 
-  interface Props {
+  type Props = {
     onClose: (albums?: AlbumResponseDto[]) => void;
-  }
+  };
 
   let { onClose }: Props = $props();
 
   onMount(async () => {
-    // TODO the server should *really* just return all albums (paginated ideally)
-    const ownedAlbums = await getAllAlbums({ shared: false });
-    ownedAlbums.push.apply(ownedAlbums, await getAllAlbums({ shared: true }));
-    albums = ownedAlbums;
-    recentAlbums = albums.sort((a, b) => (new Date(a.updatedAt) > new Date(b.updatedAt) ? -1 : 1)).slice(0, 3);
+    albums = await getAllAlbums({});
+    recentAlbums = [...albums].sort((a, b) => (new Date(a.updatedAt) > new Date(b.updatedAt) ? -1 : 1)).slice(0, 3);
     loading = false;
   });
 
@@ -108,6 +105,7 @@
         }
         break;
       }
+      // no default
     }
 
     selectedRowIndex = -1;
@@ -139,6 +137,7 @@
         break;
       }
       case 'Control': {
+        // eslint-disable-next-line unicorn/no-late-event-control
         e.preventDefault();
         handleMultiSelect();
         break;
@@ -175,7 +174,7 @@
           bind:value={search}
           use:initInput
         />
-        <div class="overflow-y-auto immich-scrollbar">
+        <div class="immich-scrollbar overflow-y-auto">
           <!-- eslint-disable-next-line svelte/require-each-key -->
           {#each albumModalRows as row}
             {#if row.type === AlbumModalRowType.NEW_ALBUM}

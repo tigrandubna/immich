@@ -22,6 +22,7 @@ export type TimelineAsset = {
   ratio: number;
   thumbhash: string | null;
   localDateTime: TimelineDateTime;
+  createdAt: TimelineDateTime;
   fileCreatedAt: TimelineDateTime;
   visibility: AssetVisibility;
   isFavorite: boolean;
@@ -71,12 +72,7 @@ export interface TrashAssets {
   values: string[];
 }
 
-export interface UpdateStackAssets {
-  type: 'update_stack_assets';
-  values: string[];
-}
-
-export type PendingChange = AddAsset | UpdateAsset | DeleteAsset | TrashAssets | UpdateStackAssets;
+export type PendingChange = AddAsset | UpdateAsset | DeleteAsset | TrashAssets;
 
 export type ScrubberMonth = {
   height: number;

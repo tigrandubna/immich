@@ -33,6 +33,7 @@ export class SharedLinkFactory {
       key: factory.buffer(),
       type,
       albumId,
+      personId: null,
       createdAt: newDate(),
       expiresAt: null,
       allowUpload: true,

@@ -16,6 +16,30 @@
     { title: $t('admin.memory_cleanup_job'), value: ManualJobName.MemoryCleanup },
     { title: $t('admin.memory_generate_job'), value: ManualJobName.MemoryCreate },
     { title: $t('admin.backup_database'), value: ManualJobName.BackupDatabase },
+    {
+      title: $t('admin.maintenance_integrity_missing_file_job'),
+      value: ManualJobName.IntegrityMissingFiles,
+    },
+    {
+      title: $t('admin.maintenance_integrity_untracked_file_job'),
+      value: ManualJobName.IntegrityUntrackedFiles,
+    },
+    {
+      title: $t('admin.maintenance_integrity_checksum_mismatch_job'),
+      value: ManualJobName.IntegrityChecksumMismatch,
+    },
+    {
+      title: $t('admin.maintenance_integrity_missing_file_refresh_job'),
+      value: ManualJobName.IntegrityMissingFilesRefresh,
+    },
+    {
+      title: $t('admin.maintenance_integrity_untracked_file_refresh_job'),
+      value: ManualJobName.IntegrityUntrackedFilesRefresh,
+    },
+    {
+      title: $t('admin.maintenance_integrity_checksum_mismatch_refresh_job'),
+      value: ManualJobName.IntegrityChecksumMismatchRefresh,
+    },
     { title: $t('admin.rewrite_face_sidecars_job'), value: ManualJobName.RewriteFaceSidecars },
     { title: $t('admin.deduplicate_asset_faces_job'), value: ManualJobName.DeduplicateAssetFaces },
     { title: $t('admin.detect_recent_trips_job'), value: ManualJobName.DetectRecentTrips },

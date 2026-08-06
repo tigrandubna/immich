@@ -7,7 +7,6 @@ import {
   getMyUser,
   LoginResponseDto,
   SharedLinkType,
-  updateConfig,
 } from '@immich/sdk';
 import { exiftool } from 'exiftool-vendored';
 import { DateTime } from 'luxon';
@@ -24,7 +23,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const locationAssetFilepath = `${testAssetDir}/metadata/gps-position/thompson-springs.jpg`;
 const ratingAssetFilepath = `${testAssetDir}/metadata/rating/mongolels.jpg`;
-const facesAssetDir = `${testAssetDir}/metadata/faces`;
 
 const readTags = async (bytes: Buffer, filename: string) => {
   const filepath = join(tempDir, filename);
@@ -182,78 +180,6 @@ describe('/asset', () => {
       expect(body).toMatchObject({
         id: ratingAsset.id,
         exifInfo: expect.objectContaining({ rating: 3 }),
-      });
-    });
-
-    describe('faces', () => {
-      const metadataFaceTests = [
-        {
-          description: 'without orientation',
-          filename: 'portrait.jpg',
-        },
-        {
-          description: 'adjusting face regions to orientation',
-          filename: 'portrait-orientation-6.jpg',
-        },
-      ];
-      // should produce same resulting face region coordinates for any orientation
-      const expectedFaces = [
-        {
-          name: 'Marie Curie',
-          birthDate: null,
-          isHidden: false,
-          faces: [
-            {
-              imageHeight: 700,
-              imageWidth: 840,
-              boundingBoxX1: 261,
-              boundingBoxX2: 356,
-              boundingBoxY1: 146,
-              boundingBoxY2: 284,
-              sourceType: 'exif',
-            },
-          ],
-        },
-        {
-          name: 'Pierre Curie',
-          birthDate: null,
-          isHidden: false,
-          faces: [
-            {
-              imageHeight: 700,
-              imageWidth: 840,
-              boundingBoxX1: 536,
-              boundingBoxX2: 618,
-              boundingBoxY1: 83,
-              boundingBoxY2: 252,
-              sourceType: 'exif',
-            },
-          ],
-        },
-      ];
-
-      it.each(metadataFaceTests)('should get the asset faces from $filename $description', async ({ filename }) => {
-        const config = await utils.getSystemConfig(admin.accessToken);
-        config.metadata.faces.import = true;
-        await updateConfig({ systemConfigDto: config }, { headers: asBearerAuth(admin.accessToken) });
-
-        const facesAsset = await utils.createAsset(admin.accessToken, {
-          assetData: {
-            filename,
-            bytes: await readFile(`${facesAssetDir}/${filename}`),
-          },
-        });
-
-        await utils.waitForWebsocketEvent({ event: 'assetUpload', id: facesAsset.id });
-
-        const { status, body } = await request(app)
-          .get(`/assets/${facesAsset.id}`)
-          .set('Authorization', `Bearer ${admin.accessToken}`);
-
-        expect(status).toBe(200);
-        expect(body.id).toEqual(facesAsset.id);
-        const sortedPeople = body.people.toSorted((a: any, b: any) => a.name.localeCompare(b.name));
-        expect(sortedPeople).toMatchObject(expectedFaces);
       });
     });
 
@@ -855,7 +781,7 @@ describe('/asset', () => {
             exifImageWidth: 4032,
             exifImageHeight: 3024,
             latitude: 41.2203,
-            longitude: -96.071_625,
+            longitude: -96.071625,
             make: 'Apple',
             model: 'iPhone 7',
             lensModel: 'iPhone 7 back camera 3.99mm f/1.8',
@@ -1047,9 +973,9 @@ describe('/asset', () => {
             fileSizeInByte: 31_175_472,
             focalLength: 18.3,
             iso: 100,
-            latitude: 36.613_24,
+            latitude: 36.61324,
             lensModel: '18.3mm F2.8',
-            longitude: -121.897_85,
+            longitude: -121.89785,
             make: 'RICOH IMAGING COMPANY, LTD.',
             model: 'RICOH GR III',
             orientation: '1',

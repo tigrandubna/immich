@@ -1,10 +1,8 @@
 <script lang="ts">
   import { goto, invalidate, onNavigate } from '$app/navigation';
   import { scrollMemoryClearer } from '$lib/actions/scroll-memory';
-  import AlbumDescription from './AlbumDescription.svelte';
   import AlbumMap from '$lib/components/album-page/AlbumMap.svelte';
   import AlbumSummary from '$lib/components/album-page/AlbumSummary.svelte';
-  import AlbumTitle from './AlbumTitle.svelte';
   import ActivityStatus from '$lib/components/asset-viewer/ActivityStatus.svelte';
   import ActivityViewer from '$lib/components/asset-viewer/ActivityViewer.svelte';
   import HeaderActionButton from '$lib/components/HeaderActionButton.svelte';
@@ -78,6 +76,8 @@
   import { t } from 'svelte-i18n';
   import { fly } from 'svelte/transition';
   import type { PageData } from './$types';
+  import AlbumDescription from './AlbumDescription.svelte';
+  import AlbumTitle from './AlbumTitle.svelte';
 
   interface Props {
     data: PageData;
@@ -178,11 +178,13 @@
   };
 
   const updateThumbnailUsingCurrentSelection = async () => {
-    if (assetMultiSelectManager.assets.length === 1) {
-      const [firstAsset] = assetMultiSelectManager.assets;
-      assetMultiSelectManager.clear();
-      await updateThumbnail(firstAsset.id);
+    if (assetMultiSelectManager.assets.length !== 1) {
+      return;
     }
+
+    const [firstAsset] = assetMultiSelectManager.assets;
+    assetMultiSelectManager.clear();
+    await updateThumbnail(firstAsset.id);
   };
 
   const updateThumbnail = async (assetId: string) => {
@@ -274,10 +276,12 @@
   };
 
   const onAlbumDelete = async ({ id }: AlbumResponseDto) => {
-    if (id === album.id) {
-      await goto(Route.albums());
-      viewMode = AlbumPageViewMode.VIEW;
+    if (id !== album.id) {
+      return;
     }
+
+    await goto(Route.albums());
+    viewMode = AlbumPageViewMode.VIEW;
   };
 
   const onAlbumAddAssets = async ({ albumIds }: { albumIds: string[] }) => {
@@ -499,7 +503,7 @@
       </AssetSelectControlBar>
     {:else}
       {#if viewMode === AlbumPageViewMode.VIEW}
-        <ControlAppBar showBackButton backIcon={mdiArrowLeft} onClose={() => goto(Route.albums())}>
+        <ControlAppBar backIcon={mdiArrowLeft} onClose={() => goto(Route.albums())}>
           {#snippet trailing()}
             <ActionButton action={Cast} />
 

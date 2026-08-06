@@ -18,9 +18,7 @@
   import TrashSettings from './TrashSettings.svelte';
   import UserSettings from './UserSettings.svelte';
   import AdminPageLayout from '$lib/components/layouts/AdminPageLayout.svelte';
-  import SettingAccordionState from '$lib/components/shared-components/settings/SettingAccordionState.svelte';
   import SettingAccordion from '$lib/components/shared-components/settings/SettingAccordion.svelte';
-  import { QueryParameter } from '$lib/constants';
   import SearchBar from '$lib/elements/SearchBar.svelte';
   import { featureFlagsManager } from '$lib/managers/feature-flags-manager.svelte';
   import { systemConfigManager } from '$lib/managers/system-config-manager.svelte';
@@ -33,6 +31,7 @@
     mdiBookshelf,
     mdiClockOutline,
     mdiDatabaseOutline,
+    mdiFileCheckOutline,
     mdiFileDocumentOutline,
     mdiFolderOutline,
     mdiImageOutline,
@@ -49,6 +48,7 @@
   import type { Component } from 'svelte';
   import { t } from 'svelte-i18n';
   import type { PageData } from './$types';
+  import IntegrityChecksSettings from './IntegrityChecksSettings.svelte';
 
   type Props = {
     data: PageData;
@@ -83,6 +83,13 @@
       subtitle: $t('admin.image_settings_description'),
       key: 'image',
       icon: mdiImageOutline,
+    },
+    {
+      component: IntegrityChecksSettings,
+      title: $t('admin.integrity_checks_settings'),
+      subtitle: $t('admin.integrity_checks_settings_description'),
+      key: 'integrity-checks',
+      icon: mdiFileCheckOutline,
     },
     {
       component: JobSettings,
@@ -215,12 +222,10 @@
     <div>
       <SearchBar placeholder={$t('search_settings')} bind:name={searchQuery} showLoadingSpinner={false} />
     </div>
-    <SettingAccordionState queryParam={QueryParameter.IS_OPEN}>
-      {#each filteredSettings as { component: Component, title, subtitle, key, icon } (key)}
-        <SettingAccordion {title} {subtitle} {key} {icon}>
-          <Component />
-        </SettingAccordion>
-      {/each}
-    </SettingAccordionState>
+    {#each filteredSettings as { component: Component, title, subtitle, key, icon } (key)}
+      <SettingAccordion {title} {subtitle} {key} {icon}>
+        <Component />
+      </SettingAccordion>
+    {/each}
   </Container>
 </AdminPageLayout>

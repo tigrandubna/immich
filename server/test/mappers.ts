@@ -68,7 +68,6 @@ export const getDehydrated = <T extends Record<string, unknown>>(entity: T) => {
   for (const [key, value] of Object.entries(copiedEntity)) {
     if (value instanceof Date) {
       Object.assign(copiedEntity, { [key]: value.toISOString() });
-      continue;
     }
   }
 
@@ -164,6 +163,7 @@ export const getForGenerateThumbnail = (asset: ReturnType<AssetFactory['build']>
 export const getForAssetFace = (face: ReturnType<AssetFaceFactory['build']>) => ({
   ...face,
   person: face.person ? getDehydrated(face.person) : null,
+  excludedPerson: null,
 });
 
 export const getForDetectedFaces = (asset: ReturnType<AssetFactory['build']>) => ({
