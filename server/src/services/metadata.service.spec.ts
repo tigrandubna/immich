@@ -1,8 +1,8 @@
-import { parse as parsePath } from 'node:path';
 import { BinaryField, ExifDateTime } from 'exiftool-vendored';
 import { DateTime } from 'luxon';
 import { randomBytes } from 'node:crypto';
 import { Stats } from 'node:fs';
+import { parse as parsePath } from 'node:path';
 import { defaults } from 'src/config';
 import {
   AssetFileType,
@@ -16,7 +16,7 @@ import {
   SourceType,
 } from 'src/enum';
 import { ImmichTags } from 'src/repositories/metadata.repository';
-import { firstDateTime, MetadataService } from 'src/services/metadata.service';
+import { faceRegionsMatch, firstDateTime, MetadataService } from 'src/services/metadata.service';
 import { AssetFactory } from 'test/factories/asset.factory';
 import { PersonFactory } from 'test/factories/person.factory';
 import { videoInfoStub } from 'test/fixtures/media.stub';
@@ -1897,6 +1897,149 @@ describe(MetadataService.name, () => {
     });
   });
 
+  describe('handleSidecarWriteFaces', () => {
+    const sidecarPath = '/path/to/IMG_123.jpg.xmp';
+    const imageWidth = 4000;
+    const imageHeight = 3000;
+
+    // A face whose normalized region is exactly X=0.25, Y=0.25, W=0.2, H=0.2.
+    const namedFace = (name: string) => ({
+      id: factory.uuid(),
+      personId: factory.uuid(),
+      person: { name },
+      excludedPerson: null,
+      imageWidth,
+      imageHeight,
+      boundingBoxX1: 600,
+      boundingBoxY1: 450,
+      boundingBoxX2: 1400,
+      boundingBoxY2: 1050,
+    });
+
+    const existingRegions = (regions: { name: string; x: number; y: number; w: number; h: number }[]) =>
+      ({
+        RegionInfo: {
+          AppliedToDimensions: { W: imageWidth, H: imageHeight, Unit: 'pixel' },
+          RegionList: regions.map(({ name, x, y, w, h }) => ({
+            Name: name,
+            Type: 'Face',
+            Area: { X: x, Y: y, W: w, H: h, Unit: 'normalized' },
+          })),
+        },
+      }) as ImmichTags;
+
+    const setup = (faces: ReturnType<typeof namedFace>[]) => {
+      const asset = forSidecarJob({
+        originalPath: '/path/to/IMG_123.jpg',
+        files: [{ id: factory.uuid(), type: AssetFileType.Sidecar, path: sidecarPath, isEdited: false }],
+      });
+      mocks.systemMetadata.get.mockResolvedValue({ metadata: { faces: { writeFaces: true } } });
+      mocks.assetJob.getForSidecarCheckJob.mockResolvedValue(asset);
+      mocks.person.getFaces.mockResolvedValue(faces as never);
+      mocks.storage.checkFileExists.mockResolvedValue(true);
+      // beforeEach queues two one-shot `{}` results for readTags; drop them so
+      // each test controls what the existing sidecar contains.
+      mocks.metadata.readTags.mockReset();
+      return asset;
+    };
+
+    it('should not rewrite the sidecar when the regions already match', async () => {
+      const asset = setup([namedFace('Alice')]);
+      mocks.metadata.readTags.mockResolvedValue(existingRegions([{ name: 'Alice', x: 0.25, y: 0.25, w: 0.2, h: 0.2 }]));
+
+      await expect(sut.handleSidecarWriteFaces({ id: asset.id })).resolves.toBe(JobStatus.Skipped);
+
+      expect(mocks.metadata.writeFaceRegions).not.toHaveBeenCalled();
+      expect(mocks.asset.upsertFile).not.toHaveBeenCalled();
+    });
+
+    it('should not rewrite for drift within the tolerance', async () => {
+      const asset = setup([namedFace('Alice')]);
+      mocks.metadata.readTags.mockResolvedValue(
+        existingRegions([{ name: 'Alice', x: 0.25 + 1 / imageWidth, y: 0.25, w: 0.2, h: 0.2 }]),
+      );
+
+      await expect(sut.handleSidecarWriteFaces({ id: asset.id })).resolves.toBe(JobStatus.Skipped);
+
+      expect(mocks.metadata.writeFaceRegions).not.toHaveBeenCalled();
+    });
+
+    it('should rewrite when a face moved', async () => {
+      const asset = setup([namedFace('Alice')]);
+      mocks.metadata.readTags.mockResolvedValue(existingRegions([{ name: 'Alice', x: 0.6, y: 0.25, w: 0.2, h: 0.2 }]));
+
+      await expect(sut.handleSidecarWriteFaces({ id: asset.id })).resolves.toBe(JobStatus.Success);
+
+      expect(mocks.metadata.writeFaceRegions).toHaveBeenCalledWith(sidecarPath, {
+        imageWidth,
+        imageHeight,
+        faces: [{ name: 'Alice', x1: 600, y1: 450, x2: 1400, y2: 1050 }],
+      });
+    });
+
+    it('should rewrite when a new person appears', async () => {
+      const asset = setup([namedFace('Alice'), namedFace('Bob')]);
+      mocks.metadata.readTags.mockResolvedValue(existingRegions([{ name: 'Alice', x: 0.25, y: 0.25, w: 0.2, h: 0.2 }]));
+
+      await expect(sut.handleSidecarWriteFaces({ id: asset.id })).resolves.toBe(JobStatus.Success);
+
+      expect(mocks.metadata.writeFaceRegions).toHaveBeenCalled();
+    });
+
+    it('should rewrite when the sidecar holds regions but nothing is exportable anymore', async () => {
+      const asset = setup([{ ...namedFace('Alice'), personId: null, person: null } as never]);
+      mocks.metadata.readTags.mockResolvedValue(existingRegions([{ name: 'Alice', x: 0.25, y: 0.25, w: 0.2, h: 0.2 }]));
+
+      await expect(sut.handleSidecarWriteFaces({ id: asset.id })).resolves.toBe(JobStatus.Success);
+
+      expect(mocks.metadata.writeFaceRegions).toHaveBeenCalledWith(sidecarPath, {
+        imageWidth,
+        imageHeight,
+        faces: [],
+      });
+    });
+
+    it('should not touch a sidecar that has no regions when nothing is exportable', async () => {
+      const asset = setup([{ ...namedFace('Alice'), personId: null, person: null } as never]);
+      mocks.metadata.readTags.mockResolvedValue({} as ImmichTags);
+
+      await expect(sut.handleSidecarWriteFaces({ id: asset.id })).resolves.toBe(JobStatus.Skipped);
+
+      expect(mocks.metadata.writeFaceRegions).not.toHaveBeenCalled();
+    });
+
+    it('should rewrite when the existing areas are not normalized', async () => {
+      const asset = setup([namedFace('Alice')]);
+      const tags = existingRegions([{ name: 'Alice', x: 0.25, y: 0.25, w: 0.2, h: 0.2 }]);
+      tags.RegionInfo!.RegionList[0].Area.Unit = 'pixel';
+      mocks.metadata.readTags.mockResolvedValue(tags);
+
+      await expect(sut.handleSidecarWriteFaces({ id: asset.id })).resolves.toBe(JobStatus.Success);
+
+      expect(mocks.metadata.writeFaceRegions).toHaveBeenCalled();
+    });
+
+    it('should rewrite when the sidecar was written against other dimensions', async () => {
+      const asset = setup([namedFace('Alice')]);
+      const tags = existingRegions([{ name: 'Alice', x: 0.25, y: 0.25, w: 0.2, h: 0.2 }]);
+      tags.RegionInfo!.AppliedToDimensions.W = 1000;
+      mocks.metadata.readTags.mockResolvedValue(tags);
+
+      await expect(sut.handleSidecarWriteFaces({ id: asset.id })).resolves.toBe(JobStatus.Success);
+
+      expect(mocks.metadata.writeFaceRegions).toHaveBeenCalled();
+    });
+
+    it('should rewrite when the sidecar cannot be read', async () => {
+      const asset = setup([namedFace('Alice')]);
+      mocks.metadata.readTags.mockRejectedValue(new Error('unreadable'));
+
+      await expect(sut.handleSidecarWriteFaces({ id: asset.id })).resolves.toBe(JobStatus.Success);
+
+      expect(mocks.metadata.writeFaceRegions).toHaveBeenCalled();
+    });
+  });
+
   describe('handleSidecarCheck', () => {
     it('should do nothing if asset could not be found', async () => {
       mocks.assetJob.getForSidecarCheckJob.mockResolvedValue(void 0);
@@ -2137,5 +2280,66 @@ describe(MetadataService.name, () => {
       expect(result?.tag).toBe('CreationDate');
       expect(result?.dateTime?.toDate()?.toISOString()).toBe('2025-05-24T16:26:20.000Z');
     });
+  });
+});
+
+describe('faceRegionsMatch', () => {
+  const region = (name: string, x: number, y: number, w = 0.2, h = 0.2) => ({ name, x, y, w, h });
+
+  it('should treat an identical list as a match regardless of order', () => {
+    const a = [region('Alice', 0.25, 0.25), region('Bob', 0.75, 0.5)];
+    const b = [region('Bob', 0.75, 0.5), region('Alice', 0.25, 0.25)];
+    expect(faceRegionsMatch(a, b, 4000, 3000)).toBe(true);
+  });
+
+  it('should absorb the sub-pixel drift of a database round-trip', () => {
+    const existing = [region('Alice', 0.25, 0.25)];
+    // 1px of a 4000px-wide image, the worst case of floor() on import.
+    const next = [region('Alice', 0.25 + 1 / 4000, 0.25 + 1 / 3000)];
+    expect(faceRegionsMatch(existing, next, 4000, 3000)).toBe(true);
+  });
+
+  it('should reject a box that moved beyond the tolerance', () => {
+    const existing = [region('Alice', 0.25, 0.25)];
+    const next = [region('Alice', 0.4, 0.25)];
+    expect(faceRegionsMatch(existing, next, 4000, 3000)).toBe(false);
+  });
+
+  it('should scale the tolerance with the image on large photos', () => {
+    // 0.5% of 8000px is 40px, so a 30px shift is still the same face...
+    expect(faceRegionsMatch([region('Alice', 0.25, 0.25)], [region('Alice', 0.25 + 30 / 8000, 0.25)], 8000, 6000)).toBe(
+      true,
+    );
+    // ...while on a small image the flat 8px budget applies instead.
+    expect(faceRegionsMatch([region('Alice', 0.25, 0.25)], [region('Alice', 0.25 + 30 / 400, 0.25)], 400, 300)).toBe(
+      false,
+    );
+  });
+
+  it('should reject a renamed region even in the same place', () => {
+    expect(faceRegionsMatch([region('Alice', 0.25, 0.25)], [region('Alicia', 0.25, 0.25)], 4000, 3000)).toBe(false);
+  });
+
+  it('should reject a resized box', () => {
+    expect(
+      faceRegionsMatch([region('Alice', 0.25, 0.25, 0.2, 0.2)], [region('Alice', 0.25, 0.25, 0.4, 0.2)], 4000, 3000),
+    ).toBe(false);
+  });
+
+  it('should reject when a face was added or removed', () => {
+    const one = [region('Alice', 0.25, 0.25)];
+    const two = [region('Alice', 0.25, 0.25), region('Bob', 0.75, 0.5)];
+    expect(faceRegionsMatch(one, two, 4000, 3000)).toBe(false);
+    expect(faceRegionsMatch(two, one, 4000, 3000)).toBe(false);
+  });
+
+  it('should require a partner for every copy of a duplicated name', () => {
+    const existing = [region('Alice', 0.25, 0.25), region('Alice', 0.75, 0.5)];
+    const next = [region('Alice', 0.25, 0.25), region('Alice', 0.25, 0.25)];
+    expect(faceRegionsMatch(existing, next, 4000, 3000)).toBe(false);
+  });
+
+  it('should match two empty lists', () => {
+    expect(faceRegionsMatch([], [], 4000, 3000)).toBe(true);
   });
 });

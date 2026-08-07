@@ -50,6 +50,60 @@ const POSTGRES_INT_MIN = -2_147_483_648;
 // it's not interpreted by exiftool.
 const EXCLUDED_REGION_PREFIX = 'immich:excluded:';
 
+// How far a region may drift before handleSidecarWriteFaces considers the
+// sidecar out of date. A round-trip through the database is inherently lossy:
+// the reader floors normalized coordinates to whole pixels, the writer divides
+// them back and rounds to six decimals, so re-exporting an unchanged face can
+// move it by up to a pixel. Rewriting the file for that is pure churn — on an
+// external library it also re-uploads the file to whatever syncs the folder.
+// The allowance is the larger of a flat pixel budget and a share of the image
+// dimension, so it stays meaningful on both small and very large images.
+const FACE_REGION_TOLERANCE_PX = 8;
+const FACE_REGION_TOLERANCE_RATIO = 0.005;
+
+type NormalizedRegion = { name: string; x: number; y: number; w: number; h: number };
+
+const regionTolerance = (dimension: number) =>
+  Math.max(FACE_REGION_TOLERANCE_PX, dimension * FACE_REGION_TOLERANCE_RATIO) / (dimension || 1);
+
+/**
+ * Compare the region list about to be written with the one already in the
+ * sidecar. Names must match exactly; geometry only has to agree within
+ * `regionTolerance`. Order is irrelevant — each existing region is consumed by
+ * at most one incoming region, so a duplicated name still needs a partner each.
+ */
+export const faceRegionsMatch = (
+  existing: NormalizedRegion[],
+  next: NormalizedRegion[],
+  imageWidth: number,
+  imageHeight: number,
+): boolean => {
+  if (existing.length !== next.length) {
+    return false;
+  }
+
+  const toleranceX = regionTolerance(imageWidth);
+  const toleranceY = regionTolerance(imageHeight);
+  const unmatched = [...existing];
+
+  for (const region of next) {
+    const index = unmatched.findIndex(
+      (candidate) =>
+        candidate.name === region.name &&
+        Math.abs(candidate.x - region.x) <= toleranceX &&
+        Math.abs(candidate.w - region.w) <= toleranceX &&
+        Math.abs(candidate.y - region.y) <= toleranceY &&
+        Math.abs(candidate.h - region.h) <= toleranceY,
+    );
+    if (index === -1) {
+      return false;
+    }
+    unmatched.splice(index, 1);
+  }
+
+  return true;
+};
+
 /** look for a date from these tags (in order) */
 const EXIF_DATE_TAGS: Array<keyof ImmichTags> = [
   'SubSecDateTimeOriginal',
@@ -592,6 +646,15 @@ export class MetadataService extends BaseService {
       return JobStatus.Skipped;
     }
 
+    // Nothing is written when the sidecar already says exactly this. A write is
+    // queued whenever recognition touches any face on the asset, and most of
+    // those runs change nothing exportable — e.g. a newly detected face gets an
+    // auto-created person, which has no name yet and so never reaches `entries`.
+    if (await this.faceRegionsUpToDate(target, entries, imageWidth, imageHeight)) {
+      this.logger.debug(`Face regions already up to date for ${target}`);
+      return JobStatus.Skipped;
+    }
+
     // Pass the entries (possibly an empty list). writeFaceRegions calls
     // exiftool with `RegionName^` and friends as plain arrays, which replaces
     // the existing region list outright — an empty list therefore wipes any
@@ -608,6 +671,70 @@ export class MetadataService extends BaseService {
     }
 
     return JobStatus.Success;
+  }
+
+  /**
+   * True when the sidecar at `target` already holds these regions, so writing
+   * would only change the file's mtime. Anything uncertain — unreadable file,
+   * pixel-unit areas we don't emit, mismatched AppliedToDimensions — counts as
+   * out of date, because a needless write is cheaper than a silently stale
+   * sidecar.
+   */
+  private async faceRegionsUpToDate(
+    target: string,
+    entries: { name: string; x1: number; y1: number; x2: number; y2: number }[],
+    imageWidth: number,
+    imageHeight: number,
+  ): Promise<boolean> {
+    if (!(await this.storageRepository.checkFileExists(target, constants.R_OK))) {
+      return entries.length === 0;
+    }
+
+    let tags: ImmichTags;
+    try {
+      tags = await this.metadataRepository.readTags(target);
+    } catch (error) {
+      this.logger.debug(`Could not read existing face regions from ${target}: ${error}`);
+      return false;
+    }
+
+    const regionInfo = tags.RegionInfo;
+    const existingList = regionInfo?.RegionList ?? [];
+    if (existingList.length === 0) {
+      return entries.length === 0;
+    }
+
+    // The writer always emits normalized areas against the asset's own pixel
+    // dimensions; anything else came from another tool and is left alone only
+    // after a rewrite in our own format.
+    const applied = regionInfo?.AppliedToDimensions;
+    if (!applied || applied.W !== imageWidth || applied.H !== imageHeight) {
+      return false;
+    }
+    if (existingList.some((region) => region.Area?.Unit !== 'normalized')) {
+      return false;
+    }
+
+    const existing: NormalizedRegion[] = existingList.map((region) => ({
+      name: region.Name ?? '',
+      x: Number(region.Area.X),
+      y: Number(region.Area.Y),
+      w: Number(region.Area.W),
+      h: Number(region.Area.H),
+    }));
+    if (existing.some((region) => !region.name || [region.x, region.y, region.w, region.h].some(Number.isNaN))) {
+      return false;
+    }
+
+    const next: NormalizedRegion[] = entries.map((entry) => ({
+      name: entry.name,
+      x: (entry.x1 + entry.x2) / 2 / imageWidth,
+      y: (entry.y1 + entry.y2) / 2 / imageHeight,
+      w: (entry.x2 - entry.x1) / imageWidth,
+      h: (entry.y2 - entry.y1) / imageHeight,
+    }));
+
+    return faceRegionsMatch(existing, next, imageWidth, imageHeight);
   }
 
   @OnJob({ name: JobName.SidecarWrite, queue: QueueName.Sidecar })
