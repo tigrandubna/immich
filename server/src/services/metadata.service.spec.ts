@@ -16,7 +16,7 @@ import {
   SourceType,
 } from 'src/enum';
 import { ImmichTags } from 'src/repositories/metadata.repository';
-import { faceRegionsMatch, firstDateTime, MetadataService } from 'src/services/metadata.service';
+import { dedupeFaceRegions, faceRegionsMatch, firstDateTime, MetadataService } from 'src/services/metadata.service';
 import { AssetFactory } from 'test/factories/asset.factory';
 import { PersonFactory } from 'test/factories/person.factory';
 import { videoInfoStub } from 'test/fixtures/media.stub';
@@ -1973,8 +1973,84 @@ describe(MetadataService.name, () => {
       expect(mocks.metadata.writeFaceRegions).toHaveBeenCalledWith(sidecarPath, {
         imageWidth,
         imageHeight,
-        faces: [{ name: 'Alice', x1: 600, y1: 450, x2: 1400, y2: 1050 }],
+        faces: [{ name: 'Alice', x: 0.25, y: 0.25, w: 0.2, h: 0.2 }],
       });
+    });
+
+    it('should normalize each face against its own frame, not a shared one', async () => {
+      // The sidecar-imported face was measured on the 4000x3000 original, the
+      // detected one on the 1920x1440 preview. Both sit at the same spot in the
+      // picture, so both must come out at the same normalized coordinates.
+      const asset = setup([
+        namedFace('Alice'),
+        {
+          ...namedFace('Bob'),
+          imageWidth: 1920,
+          imageHeight: 1440,
+          boundingBoxX1: 288,
+          boundingBoxY1: 216,
+          boundingBoxX2: 672,
+          boundingBoxY2: 504,
+        },
+      ]);
+      mocks.metadata.readTags.mockResolvedValue({} as ImmichTags);
+
+      await expect(sut.handleSidecarWriteFaces({ id: asset.id })).resolves.toBe(JobStatus.Success);
+
+      expect(mocks.metadata.writeFaceRegions).toHaveBeenCalledWith(sidecarPath, {
+        imageWidth,
+        imageHeight,
+        faces: [
+          { name: 'Alice', x: 0.25, y: 0.25, w: 0.2, h: 0.2 },
+          { name: 'Bob', x: 0.25, y: 0.25, w: 0.2, h: 0.2 },
+        ],
+      });
+    });
+
+    it('should quote regions against the largest frame available', async () => {
+      const asset = setup([{ ...namedFace('Alice'), imageWidth: 1920, imageHeight: 1440 }, namedFace('Bob')]);
+      mocks.metadata.readTags.mockResolvedValue({} as ImmichTags);
+
+      await sut.handleSidecarWriteFaces({ id: asset.id });
+
+      expect(mocks.metadata.writeFaceRegions).toHaveBeenCalledWith(
+        sidecarPath,
+        expect.objectContaining({ imageWidth: 4000, imageHeight: 3000 }),
+      );
+    });
+
+    it('should write one region when a person is recorded twice on the same face', async () => {
+      // Exactly what a sidecar import plus a detection produces: same person,
+      // same spot, two rows measured against different frames.
+      const asset = setup([
+        namedFace('Alice'),
+        {
+          ...namedFace('Alice'),
+          imageWidth: 1920,
+          imageHeight: 1440,
+          boundingBoxX1: 290,
+          boundingBoxY1: 214,
+          boundingBoxX2: 674,
+          boundingBoxY2: 506,
+        },
+      ]);
+      mocks.metadata.readTags.mockResolvedValue({} as ImmichTags);
+
+      await sut.handleSidecarWriteFaces({ id: asset.id });
+
+      const written = mocks.metadata.writeFaceRegions.mock.calls[0][1].faces;
+      expect(written).toHaveLength(1);
+      expect(written[0].name).toBe('Alice');
+    });
+
+    it('should skip a face with no frame dimensions instead of dividing by zero', async () => {
+      const asset = setup([namedFace('Alice'), { ...namedFace('Bob'), imageWidth: 0, imageHeight: 0 } as never]);
+      mocks.metadata.readTags.mockResolvedValue({} as ImmichTags);
+
+      await sut.handleSidecarWriteFaces({ id: asset.id });
+
+      const written = mocks.metadata.writeFaceRegions.mock.calls[0][1].faces;
+      expect(written).toEqual([{ name: 'Alice', x: 0.25, y: 0.25, w: 0.2, h: 0.2 }]);
     });
 
     it('should rewrite when a new person appears', async () => {
@@ -2341,5 +2417,28 @@ describe('faceRegionsMatch', () => {
 
   it('should match two empty lists', () => {
     expect(faceRegionsMatch([], [], 4000, 3000)).toBe(true);
+  });
+});
+
+describe('dedupeFaceRegions', () => {
+  const region = (name: string, x: number, y: number, w = 0.2, h = 0.2) => ({ name, x, y, w, h });
+
+  it('should collapse the same person recorded twice in one spot', () => {
+    const result = dedupeFaceRegions([region('Alice', 0.25, 0.25), region('Alice', 0.26, 0.25)]);
+    expect(result).toEqual([region('Alice', 0.25, 0.25)]);
+  });
+
+  it('should keep the same person appearing twice in the picture', () => {
+    const regions = [region('Alice', 0.2, 0.3), region('Alice', 0.8, 0.3)];
+    expect(dedupeFaceRegions(regions)).toEqual(regions);
+  });
+
+  it('should keep two people standing shoulder to shoulder', () => {
+    const regions = [region('Alice', 0.4, 0.5, 0.15, 0.15), region('Bob', 0.5, 0.5, 0.15, 0.15)];
+    expect(dedupeFaceRegions(regions)).toEqual(regions);
+  });
+
+  it('should leave an empty list alone', () => {
+    expect(dedupeFaceRegions([])).toEqual([]);
   });
 });

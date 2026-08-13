@@ -8,11 +8,17 @@ import { mimeTypes } from 'src/utils/mime-types';
 
 export interface FaceRegion {
   name: string;
-  // Bounding box in pixels of the (imageWidth, imageHeight) coordinate space
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
+  // Centre and size as fractions of the image, the MWG "normalized" unit.
+  //
+  // Callers normalize, not this repository: faces on one asset can be stored
+  // against different pixel frames (a region imported from a sidecar is in the
+  // original's pixels, one from face detection is in the preview's), and
+  // dividing them all by a single width/height puts half of them in the wrong
+  // place — regions land outside the frame or shrink towards the corner.
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 const XMP_STUB =
@@ -172,16 +178,12 @@ export class MetadataRepository {
     const areaH: number[] = [];
     const areaUnit: string[] = [];
     for (const face of faces) {
-      const cx = ((face.x1 + face.x2) / 2) / imageWidth;
-      const cy = ((face.y1 + face.y2) / 2) / imageHeight;
-      const w = (face.x2 - face.x1) / imageWidth;
-      const h = (face.y2 - face.y1) / imageHeight;
       names.push(face.name);
       types.push('Face');
-      areaX.push(Number(cx.toFixed(6)));
-      areaY.push(Number(cy.toFixed(6)));
-      areaW.push(Number(w.toFixed(6)));
-      areaH.push(Number(h.toFixed(6)));
+      areaX.push(Number(face.x.toFixed(6)));
+      areaY.push(Number(face.y.toFixed(6)));
+      areaW.push(Number(face.w.toFixed(6)));
+      areaH.push(Number(face.h.toFixed(6)));
       areaUnit.push('normalized');
     }
 

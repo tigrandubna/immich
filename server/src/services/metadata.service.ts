@@ -104,6 +104,39 @@ export const faceRegionsMatch = (
   return true;
 };
 
+// Two regions for one name are the same face when their boxes overlap this
+// much. Distinct people photographed side by side never reach it; the same
+// face recorded twice — once from the sidecar, once from detection — always
+// does.
+const DUPLICATE_REGION_IOU = 0.4;
+
+const regionIou = (a: NormalizedRegion, b: NormalizedRegion): number => {
+  const overlapW = Math.max(0, Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2));
+  const overlapH = Math.max(0, Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2));
+  const intersection = overlapW * overlapH;
+  const union = a.w * a.h + b.w * b.h - intersection;
+  return union > 0 ? intersection / union : 0;
+};
+
+/**
+ * Drop the second copy when one person ends up with two overlapping regions.
+ * That happens whenever a sidecar-imported face and a detected face describe
+ * the same person on the same asset, and writing both leaves a stray box in
+ * every other photo tool that reads the file.
+ */
+export const dedupeFaceRegions = (regions: NormalizedRegion[]): NormalizedRegion[] => {
+  const kept: NormalizedRegion[] = [];
+  for (const region of regions) {
+    const duplicate = kept.some(
+      (candidate) => candidate.name === region.name && regionIou(candidate, region) >= DUPLICATE_REGION_IOU,
+    );
+    if (!duplicate) {
+      kept.push(region);
+    }
+  }
+  return kept;
+};
+
 /** look for a date from these tags (in order) */
 const EXIF_DATE_TAGS: Array<keyof ImmichTags> = [
   'SubSecDateTimeOriginal',
@@ -598,33 +631,38 @@ export class MetadataService extends BaseService {
     //    is set). We round-trip those through the sidecar by storing them under
     //    a synthetic name `immich:excluded:<previousName>` so a future re-import
     //    can recreate the exclusion and avoid auto-reattaching the face.
-    type Entry = {
-      name: string;
-      x1: number;
-      y1: number;
-      x2: number;
-      y2: number;
-    };
-    const entries: Entry[] = [];
+    //
+    // Each region is normalized against the frame its own bounding box was
+    // measured in: a face imported from a sidecar is in the original's pixels
+    // while one from face detection is in the preview's, and both kinds live on
+    // the same asset. Normalizing the whole list by a single width/height is
+    // what produced regions outside the frame and phantom duplicates shrunk
+    // towards the corner.
+    const entries: NormalizedRegion[] = [];
     for (const f of faces) {
-      if (f.person?.name && f.personId) {
-        entries.push({
-          name: f.person.name,
-          x1: f.boundingBoxX1,
-          y1: f.boundingBoxY1,
-          x2: f.boundingBoxX2,
-          y2: f.boundingBoxY2,
-        });
-      } else if (f.excludedPerson?.name && !f.personId) {
-        entries.push({
-          name: `${EXCLUDED_REGION_PREFIX}${f.excludedPerson.name}`,
-          x1: f.boundingBoxX1,
-          y1: f.boundingBoxY1,
-          x2: f.boundingBoxX2,
-          y2: f.boundingBoxY2,
-        });
+      const name = f.person?.name && f.personId ? f.person.name : undefined;
+      const excluded = f.excludedPerson?.name && !f.personId ? f.excludedPerson.name : undefined;
+      if (!name && !excluded) {
+        continue;
       }
+
+      if (!f.imageWidth || !f.imageHeight) {
+        this.logger.warn(
+          `Skipping face ${f.id} with no frame dimensions while writing regions for ${asset.originalPath}`,
+        );
+        continue;
+      }
+
+      entries.push({
+        name: name ?? `${EXCLUDED_REGION_PREFIX}${excluded}`,
+        x: (f.boundingBoxX1 + f.boundingBoxX2) / 2 / f.imageWidth,
+        y: (f.boundingBoxY1 + f.boundingBoxY2) / 2 / f.imageHeight,
+        w: (f.boundingBoxX2 - f.boundingBoxX1) / f.imageWidth,
+        h: (f.boundingBoxY2 - f.boundingBoxY1) / f.imageHeight,
+      });
     }
+
+    const regions = dedupeFaceRegions(entries);
 
     const target = await this.resolveSidecarTarget(asset, metadata.faces.readFromSubfolder);
     const sidecarFile = asset.files?.find((file) => file.type === AssetFileType.Sidecar);
@@ -632,13 +670,20 @@ export class MetadataService extends BaseService {
     // If there are no exportable entries AND no sidecar already exists, there
     // is genuinely nothing to write — don't create an empty file just to record
     // an empty region list.
-    if (entries.length === 0 && !sidecarFile) {
+    if (regions.length === 0 && !sidecarFile) {
       return JobStatus.Skipped;
     }
 
-    // Use any face for AppliedToDimensions when none are exportable (cleanup
-    // mode); those dimensions describe the asset, not the region content.
-    const dimensionSource = faces[0];
+    // AppliedToDimensions is only the frame the normalized areas are quoted
+    // against, so any face's dimensions describe it correctly — pick the
+    // largest, which is the original rather than a preview when both are
+    // present, and keeps the most precision for readers that convert back to
+    // pixels. Faces on one asset share an aspect ratio, so the choice cannot
+    // move a region.
+    const dimensionSource = faces.reduce<(typeof faces)[number] | undefined>(
+      (best, face) => (face.imageWidth > (best?.imageWidth ?? 0) ? face : best),
+      undefined,
+    );
     const imageWidth = dimensionSource?.imageWidth || 0;
     const imageHeight = dimensionSource?.imageHeight || 0;
     if (!imageWidth || !imageHeight) {
@@ -650,7 +695,7 @@ export class MetadataService extends BaseService {
     // queued whenever recognition touches any face on the asset, and most of
     // those runs change nothing exportable — e.g. a newly detected face gets an
     // auto-created person, which has no name yet and so never reaches `entries`.
-    if (await this.faceRegionsUpToDate(target, entries, imageWidth, imageHeight)) {
+    if (await this.faceRegionsUpToDate(target, regions, imageWidth, imageHeight)) {
       this.logger.debug(`Face regions already up to date for ${target}`);
       return JobStatus.Skipped;
     }
@@ -662,7 +707,7 @@ export class MetadataService extends BaseService {
     await this.metadataRepository.writeFaceRegions(target, {
       imageWidth,
       imageHeight,
-      faces: entries,
+      faces: regions,
     });
 
     // Persist the sidecar reference if this is a newly-created file.
@@ -682,12 +727,12 @@ export class MetadataService extends BaseService {
    */
   private async faceRegionsUpToDate(
     target: string,
-    entries: { name: string; x1: number; y1: number; x2: number; y2: number }[],
+    next: NormalizedRegion[],
     imageWidth: number,
     imageHeight: number,
   ): Promise<boolean> {
     if (!(await this.storageRepository.checkFileExists(target, constants.R_OK))) {
-      return entries.length === 0;
+      return next.length === 0;
     }
 
     let tags: ImmichTags;
@@ -701,7 +746,7 @@ export class MetadataService extends BaseService {
     const regionInfo = tags.RegionInfo;
     const existingList = regionInfo?.RegionList ?? [];
     if (existingList.length === 0) {
-      return entries.length === 0;
+      return next.length === 0;
     }
 
     // The writer always emits normalized areas against the asset's own pixel
@@ -725,14 +770,6 @@ export class MetadataService extends BaseService {
     if (existing.some((region) => !region.name || [region.x, region.y, region.w, region.h].some(Number.isNaN))) {
       return false;
     }
-
-    const next: NormalizedRegion[] = entries.map((entry) => ({
-      name: entry.name,
-      x: (entry.x1 + entry.x2) / 2 / imageWidth,
-      y: (entry.y1 + entry.y2) / 2 / imageHeight,
-      w: (entry.x2 - entry.x1) / imageWidth,
-      h: (entry.y2 - entry.y1) / imageHeight,
-    }));
 
     return faceRegionsMatch(existing, next, imageWidth, imageHeight);
   }
